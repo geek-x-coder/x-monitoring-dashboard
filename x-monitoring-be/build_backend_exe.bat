@@ -8,7 +8,7 @@ echo   x-monitoring-be  Build Script
 echo ============================================================
 echo.
 
-echo [1/5] Installing Python dependencies...
+echo [1/6] Installing Python dependencies...
 python -m pip install -r requirements.txt
 if errorlevel 1 (
     echo ERROR: pip install failed.
@@ -16,7 +16,15 @@ if errorlevel 1 (
 )
 
 echo.
-echo [2/5] Building x-monitoring-be (onedir) with PyInstaller...
+echo [2/6] Cleaning previous build artifacts...
+:: Only remove PyInstaller outputs, preserve user-editable files
+if exist "dist\_internal" rmdir /S /Q "dist\_internal"
+if exist "dist\x-monitoring-be.exe" del /Q "dist\x-monitoring-be.exe"
+if exist "dist\x-monitoring-be" rmdir /S /Q "dist\x-monitoring-be"
+if exist "build" rmdir /S /Q "build"
+
+echo.
+echo [3/6] Building x-monitoring-be (onedir) with PyInstaller...
 pyinstaller --noconfirm --clean x_monitoring_be.spec
 if errorlevel 1 (
     echo ERROR: PyInstaller build failed.
@@ -24,32 +32,47 @@ if errorlevel 1 (
 )
 
 echo.
-echo [3/5] Flattening dist output to dist\...
-:: PyInstaller onedir creates dist\x-monitoring-be\ — move contents up to dist\ directly
+echo [4/6] Flattening dist output to dist\...
+:: PyInstaller onedir creates dist\x-monitoring-be\ — move exe and _internal up
 if exist "dist\x-monitoring-be" (
-    xcopy /E /I /Y "dist\x-monitoring-be\*" "dist\"
+    move /Y "dist\x-monitoring-be\x-monitoring-be.exe" "dist\x-monitoring-be.exe"
+    if exist "dist\_internal" rmdir /S /Q "dist\_internal"
+    move "dist\x-monitoring-be\_internal" "dist\_internal"
     rmdir /S /Q "dist\x-monitoring-be"
 )
 
 echo.
-echo [4/5] Copying editable runtime files to dist\...
+echo [5/6] Ensuring editable runtime files in dist\...
 
-:: config.json — operators can change DB connections, API endpoints, auth, etc.
-copy /Y "config.json" "dist\config.json"
+:: config.json — copy only if not already present
+if not exist "dist\config.json" (
+    copy /Y "config.json" "dist\config.json"
+    echo   config.json copied
+) else (
+    echo   config.json already exists, keeping as-is
+)
 
-:: sql\ — SQL query files that can be edited without rebuilding
-if exist "dist\sql" rmdir /S /Q "dist\sql"
-xcopy /E /I /Q "sql" "dist\sql"
+:: sql\ — copy only if not already present
+if not exist "dist\sql" (
+    xcopy /E /I /Q "sql" "dist\sql"
+    echo   sql\ copied
+) else (
+    echo   sql\ already exists, keeping as-is
+)
 
-:: drivers\ — JDBC driver JARs (add/remove jars without rebuilding)
-if exist "dist\drivers" rmdir /S /Q "dist\drivers"
-xcopy /E /I /Q "drivers" "dist\drivers"
+:: drivers\ — copy only if not already present
+if not exist "dist\drivers" (
+    xcopy /E /I /Q "drivers" "dist\drivers"
+    echo   drivers\ copied
+) else (
+    echo   drivers\ already exists, keeping as-is
+)
 
-:: .env.example — environment variable reference
+:: .env.example — always overwrite (reference file)
 if exist ".env.example" copy /Y ".env.example" "dist\.env.example"
 
 echo.
-echo [5/5] Creating logs directory...
+echo [6/6] Creating logs directory...
 if not exist "dist\logs" mkdir "dist\logs"
 
 echo.

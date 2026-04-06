@@ -237,10 +237,14 @@ build_backend_exe.bat
 | 단계 | 내용 |
 |------|------|
 | 1 | `pip install -r requirements.txt` |
-| 2 | `pyinstaller --noconfirm --clean x_monitoring_be.spec` |
-| 3 | dist 폴더 정리 (onedir 플래팅) |
-| 4 | `config.json`, `sql/`, `drivers/`, `.env.example` → `dist\`로 복사 |
-| 5 | `logs/` 디렉토리 생성 |
+| 2 | 이전 빌드 산출물 정리 (`_internal/`, `x-monitoring-be.exe`만 삭제, 런타임 파일 보존) |
+| 3 | `pyinstaller --noconfirm --clean x_monitoring_be.spec` |
+| 4 | dist 폴더 플래튼 (`dist\x-monitoring-be\` → `dist\`로 exe, `_internal` 이동) |
+| 5 | 런타임 파일 확인 — `config.json`, `sql/`, `drivers/`가 없을 때만 초기 복사 (기존 파일 보존) |
+| 6 | `logs/` 디렉토리 생성 (없을 때만) |
+
+> **재빌드 시 `config.json`, `sql/`, `drivers/`, `logs/`는 덮어쓰지 않습니다.**
+> 운영 환경에서 수정한 설정이 빌드로 인해 초기화되지 않으므로 안심하고 재빌드할 수 있습니다.
 
 ### 6.2 빌드 결과물 확인
 
