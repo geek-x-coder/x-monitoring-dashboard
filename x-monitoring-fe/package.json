@@ -16,6 +16,7 @@
         "build": "vite build",
         "build:simulation": "vite build --mode simulation",
         "build:web": "vite build",
+        "build:iis": "vite build --mode iis",
         "build:desktop": "npm run build:web && cross-env CSC_IDENTITY_AUTO_DISCOVERY=false electron-builder --win nsis",
         "pack:desktop": "npm run build:web && powershell -ExecutionPolicy Bypass -File electron/package-portable.ps1",
         "preview": "vite preview"

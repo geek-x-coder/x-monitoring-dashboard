@@ -21,7 +21,8 @@ x-monitoring-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 11. [환경 변수](#11-환경-변수)
 12. [로그](#12-로그)
 13. [운영 가이드](#13-운영-가이드)
-14. [트러블슈팅](#14-트러블슈팅)
+14. [IIS 단일 사이트 배포 (Frontend + Backend 같은 포트)](#14-iis-단일-사이트-배포-frontend--backend-같은-포트)
+15. [트러블슈팅](#15-트러블슈팅)
 
 ---
 
@@ -840,9 +841,209 @@ logs/x_monitoring_be-YYYY-MM-DD.log
 
 ---
 
-## 14. 트러블슈팅
+## 14. IIS 단일 사이트 배포 (Frontend + Backend 같은 포트)
 
-### 14.1 서버가 시작되지 않음
+Windows IIS 환경에서 **프론트엔드와 백엔드를 하나의 사이트(같은 포트)로 통합 배포**할 때 백엔드가 어떻게 동작해야 하는지 설명합니다.
+
+> **전체 구성과 IIS web.config 작성법은 프론트엔드 README의 "7. IIS 단일 사이트 배포" 섹션을 참조하세요.**
+> 이 섹션은 백엔드 측면에서 필요한 설정과 주의사항만 다룹니다.
+
+### 14.1 배포 구조 개요
+
+```
+다른 PC 브라우저
+  → IIS (서버:80)                           ← 외부 노출
+       │
+       ├─ 정적 파일 (frontend dist/)        ← IIS 직접 서빙
+       └─ /auth/*, /dashboard/*, /api/* 등  ← 리버스 프록시
+              │
+              ▼
+         Flask Backend (127.0.0.1:5000)     ← 서버 내부 (외부 노출 X)
+```
+
+이 구성에서 백엔드는 **서버 내부에서만 접근 가능**하면 충분합니다. 외부 방화벽에서 5000 포트를 열 필요가 없습니다.
+
+### 14.2 백엔드 바인딩 설정 (`config.json`)
+
+`config.json`의 `server.host`를 **127.0.0.1**(localhost)로 설정합니다.
+
+```json
+{
+    "server": {
+        "host": "127.0.0.1",
+        "port": 5000,
+        "query_timeout_sec": 30,
+        "refresh_interval_sec": 5,
+        "thread_pool_size": 16
+    }
+}
+```
+
+| 항목 | 값 | 이유 |
+|------|----|------|
+| `host` | `127.0.0.1` | 외부 네트워크에서 직접 접근 차단. IIS만 접근 가능 |
+| `port` | `5000` | IIS web.config의 프록시 대상 포트와 일치해야 함 |
+
+> **`0.0.0.0`으로 두면** 백엔드가 모든 인터페이스에서 LISTEN 됩니다. 외부 PC에서 `http://<서버IP>:5000`으로 직접 접근 가능해지므로, 단일 사이트 배포 의도에 어긋나고 보안상 권장하지 않습니다.
+
+### 14.3 백엔드 실행 방법
+
+IIS와 백엔드는 **별개의 프로세스**입니다. IIS가 백엔드를 자동으로 띄워주지 않으므로 별도로 실행해야 합니다.
+
+**옵션 A: 콘솔 실행 (개발/테스트)**
+
+```bash
+cd x-monitoring-be
+python x_monitoring_be.py
+```
+
+**옵션 B: PyInstaller EXE 실행 (운영)**
+
+```bash
+cd dist\x-monitoring-be
+x-monitoring-be.exe
+```
+
+**옵션 C: Windows 서비스 등록 (운영 권장)**
+
+[NSSM (Non-Sucking Service Manager)](https://nssm.cc/)을 사용하여 서비스로 등록하면 서버 부팅 시 자동 실행됩니다.
+
+```bash
+nssm install x-monitoring-be "D:\path\to\x-monitoring-be\dist\x-monitoring-be\x-monitoring-be.exe"
+nssm set x-monitoring-be AppDirectory "D:\path\to\x-monitoring-be\dist\x-monitoring-be"
+nssm set x-monitoring-be Start SERVICE_AUTO_START
+nssm set x-monitoring-be AppStdout "D:\path\to\logs\stdout.log"
+nssm set x-monitoring-be AppStderr "D:\path\to\logs\stderr.log"
+nssm start x-monitoring-be
+```
+
+서비스 상태 확인:
+
+```bash
+sc query x-monitoring-be
+nssm status x-monitoring-be
+```
+
+### 14.4 CORS 설정
+
+IIS 단일 사이트 배포에서는 프론트엔드와 백엔드가 **같은 origin**(IIS 자체)이므로 **CORS가 필요 없습니다**.
+
+기존 `x_monitoring_be.py`의 CORS 설정은 그대로 두어도 무방합니다 (요청이 같은 origin이면 CORS 헤더가 무시됨). 보안을 더 강화하려면 다음과 같이 origin을 제한할 수도 있습니다.
+
+```python
+CORS(
+    app,
+    resources={r"/*": {"origins": ["http://your-iis-host"]}},
+    supports_credentials=False,
+    methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
+)
+```
+
+### 14.5 클라이언트 IP 추적 (X-Forwarded-For)
+
+기본 상태에서는 백엔드의 모든 요청 client IP가 `127.0.0.1`(IIS 자신)로 기록됩니다.
+실제 사용자의 IP를 로그에 남기려면 다음 두 가지 작업이 필요합니다.
+
+**1) IIS web.config에 X-Forwarded-For 헤더 추가**
+
+```xml
+<rewrite>
+  <rules>
+    <rule name="API - auth" stopProcessing="true">
+      <match url="^auth/(.*)" />
+      <serverVariables>
+        <set name="HTTP_X_FORWARDED_FOR" value="{REMOTE_ADDR}" />
+      </serverVariables>
+      <action type="Rewrite" url="http://127.0.0.1:5000/auth/{R:1}" />
+    </rule>
+    <!-- 다른 규칙들도 동일하게 serverVariables 추가 -->
+  </rules>
+</rewrite>
+```
+
+> `<serverVariables>`의 `HTTP_X_FORWARDED_FOR` 변수를 IIS Manager의 **URL Rewrite → View Server Variables → Add** 메뉴에서 먼저 허용 목록에 등록해야 합니다.
+
+**2) 백엔드의 클라이언트 IP 추출 함수가 X-Forwarded-For를 인식하는지 확인**
+
+`app/utils.py`의 `get_client_ip()` 함수가 X-Forwarded-For 헤더를 우선 참조하면 됩니다. 일반적으로 다음과 같이 구현됩니다:
+
+```python
+def get_client_ip() -> str:
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.remote_addr or "unknown"
+```
+
+### 14.6 API 경로 접두어 (Rate Limit, 라우트 매칭)
+
+백엔드의 라우트 경로(`/auth/*`, `/dashboard/*`, `/health`, `/logs`, `/api/*`)는 IIS의 web.config 프록시 규칙과 **1:1 대응**되어야 합니다. 백엔드에 새 라우트를 추가하면 web.config에도 해당 경로 프록시 규칙을 추가해야 합니다.
+
+**예시 — `/metrics` 신규 추가 시:**
+
+`x_monitoring_be.py`:
+
+```python
+@app.route("/metrics", methods=["GET"])
+def metrics():
+    ...
+```
+
+`web.config`:
+
+```xml
+<rule name="API - metrics" stopProcessing="true">
+  <match url="^metrics$" />
+  <action type="Rewrite" url="http://127.0.0.1:5000/metrics" />
+</rule>
+```
+
+> 이 규칙이 없으면 IIS는 `/metrics` 요청을 정적 파일로 처리하려고 시도하다가 SPA fallback으로 빠져 `index.html`을 반환하게 됩니다.
+
+### 14.7 동작 검증 (백엔드 측면)
+
+**1) 백엔드 단독 LISTEN 확인**
+
+```bash
+netstat -an | findstr :5000
+# TCP 127.0.0.1:5000 ... LISTENING  ← 이렇게 떠야 함
+# TCP 0.0.0.0:5000 ... LISTENING    ← 이건 외부에 노출됨 (의도와 다름)
+```
+
+**2) 백엔드 직접 호출**
+
+```bash
+curl http://127.0.0.1:5000/health
+```
+
+**3) IIS를 통한 호출 (프록시 동작 확인)**
+
+```bash
+curl http://localhost/health
+```
+
+같은 응답이 나와야 합니다.
+
+**4) 외부 PC에서 백엔드 직접 호출 → 실패해야 정상**
+
+외부 PC에서 `http://<서버IP>:5000/health` 요청 시 **연결 거부**되어야 합니다 (`host: "127.0.0.1"` 설정 효과).
+
+### 14.8 백엔드 측 트러블슈팅
+
+| 증상 | 원인 | 해결 |
+|------|------|------|
+| IIS가 502 Bad Gateway 반환 | 백엔드가 죽어 있음 | `curl http://127.0.0.1:5000/health` 로 확인 후 재시작 |
+| IIS가 500 반환, 백엔드 로그에 에러 | 백엔드 자체 오류 | `logs/x_monitoring_be_*.log` 확인 |
+| 외부에서 5000 포트 직접 접근 가능 | `host: "0.0.0.0"`으로 설정됨 | `config.json`의 `server.host`를 `127.0.0.1`로 변경 후 재시작 |
+| 백엔드 로그의 client IP가 모두 127.0.0.1 | X-Forwarded-For 미설정 | 14.5 참조 |
+| Rate limit이 IIS 한 IP(127.0.0.1)로 묶여 모든 사용자가 차단됨 | X-Forwarded-For 미인식 | 14.5의 `get_client_ip()` 적용 |
+
+---
+
+## 15. 트러블슈팅
+
+### 15.1 서버가 시작되지 않음
 
 **증상**: 실행 시 바로 종료되거나 에러 출력
 
@@ -854,7 +1055,7 @@ logs/x_monitoring_be-YYYY-MM-DD.log
 | config.json 오류 | JSON 문법 확인 (쉼표, 중괄호 등) |
 | 포트 충돌 | `config.json`의 `server.port` 변경 또는 기존 프로세스 종료 |
 
-### 14.2 "Class org.mariadb.jdbc.Driver is not found"
+### 15.2 "Class org.mariadb.jdbc.Driver is not found"
 
 **원인**: JVM 시작 시 JDBC 드라이버 JAR가 클래스패스에 포함되지 않음
 
@@ -864,7 +1065,7 @@ logs/x_monitoring_be-YYYY-MM-DD.log
 3. JAR 경로가 상대경로인 경우 `config.json` 기준 상대경로인지 확인
 4. EXE 재시작 (JVM은 한 번 시작되면 클래스패스 변경 불가)
 
-### 14.3 DB 연결 실패
+### 15.3 DB 연결 실패
 
 **증상**: 캐시 갱신 실패, 500 에러
 
@@ -881,7 +1082,7 @@ logs/x_monitoring_be-YYYY-MM-DD.log
 curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/status
 ```
 
-### 14.4 서버 리소스 모니터링 실패
+### 15.4 서버 리소스 모니터링 실패
 
 **증상**: 위젯에 "ERROR" 표시 또는 N/A
 
@@ -892,7 +1093,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 | SSH 포트가 기본(22)이 아닌 경우 | 위젯 설정에서 SSH 포트 지정 |
 | 원격 서버에 `top` 명령이 없음 | `procps` 패키지 설치 (`yum install procps`) |
 
-### 14.5 프론트엔드 연결 실패 (CORS)
+### 15.5 프론트엔드 연결 실패 (CORS)
 
 **증상**: 브라우저 콘솔에 CORS 에러
 
@@ -904,13 +1105,13 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 2. 또는 `x_monitoring_be.py`의 CORS 설정 확인
 3. EXE 재시작
 
-### 14.6 JWT 토큰 만료
+### 15.6 JWT 토큰 만료
 
 **증상**: 모든 API가 401 반환
 
 **해결**: 프론트엔드에서 다시 로그인 (기본 24시간 유효)
 
-### 14.7 로그 파일이 생성되지 않음
+### 15.7 로그 파일이 생성되지 않음
 
 | 확인 사항 | 해결 |
 |-----------|------|
@@ -918,7 +1119,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 | 디렉토리 쓰기 권한 | 권한 확인 (Windows: 관리자 실행) |
 | `config.json`의 `logging.directory` 경로 | 올바른 상대/절대 경로인지 확인 |
 
-### 14.8 EXE 빌드 실패
+### 15.8 EXE 빌드 실패
 
 | 증상 | 해결 |
 |------|------|
@@ -926,7 +1127,7 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 | JAR 파일 누락 | `drivers/` 폴더 확인, `build_backend_exe.bat` 실행 |
 | 빌드 후 실행 시 에러 | `dist/config.json`, `dist/sql/`, `dist/drivers/` 존재 확인 |
 
-### 14.9 캐시가 갱신되지 않음
+### 15.9 캐시가 갱신되지 않음
 
 **해결**:
 1. `GET /dashboard/cache/status`로 마지막 갱신 시각·에러 확인
