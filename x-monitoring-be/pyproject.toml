@@ -1,0 +1,5 @@
+[project]
+name = "x-monitoring-be"
+version = "1.0.0"
+description = "Monitoring Backend server"
+requires-python = ">=3.8"
