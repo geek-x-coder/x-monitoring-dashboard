@@ -4,7 +4,40 @@
  */
 import axios from "axios";
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:5000";
+/**
+ * 빌드 시점 환경변수(VITE_API_URL) 해석 규칙:
+ *   - 미정의(undefined): 개발 기본값 http://127.0.0.1:5000 사용
+ *   - 명시적 빈 문자열(""): "same-origin 모드" — IIS+ARR 같은 단일 호스트 배포.
+ *       이 경우 web.config의 rewrite 규칙이 백엔드로 프록시하므로 프론트엔드는
+ *       반드시 현재 origin으로 호출해야 한다. (.env.iis 가 이 모드를 사용함)
+ *   - 그 외 문자열: 그대로 사용
+ *
+ * 과거 코드는 `|| "http://127.0.0.1:5000"` 패턴이라 빈 문자열도 falsy 처리되어
+ * 프록시를 우회하고 127.0.0.1:5000을 직접 호출하는 버그가 있었다.
+ */
+const ENV_API_URL = import.meta.env.VITE_API_URL;
+const DEV_FALLBACK_API_URL = "http://127.0.0.1:5000";
+
+const computeBuildtimeApiBaseUrl = () => {
+    if (ENV_API_URL === undefined || ENV_API_URL === null) {
+        return DEV_FALLBACK_API_URL;
+    }
+    if (ENV_API_URL === "") {
+        // same-origin 모드: 브라우저에서 실행 중이면 현재 origin 사용,
+        // electron(file://) 등에서는 개발 fallback 사용.
+        if (
+            typeof window !== "undefined" &&
+            window.location?.origin &&
+            !window.location.origin.startsWith("file:")
+        ) {
+            return window.location.origin;
+        }
+        return DEV_FALLBACK_API_URL;
+    }
+    return ENV_API_URL;
+};
+
+export const API_BASE_URL = computeBuildtimeApiBaseUrl();
 const API_TIMEOUT_MS = parseInt(import.meta.env.VITE_API_TIMEOUT_MS || "10000");
 const RETRY_ATTEMPTS = parseInt(import.meta.env.VITE_RETRY_ATTEMPTS || "3");
 const RETRY_DELAY_MS = parseInt(import.meta.env.VITE_RETRY_DELAY_MS || "1000");

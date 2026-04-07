@@ -8,6 +8,7 @@ import {
     rememberApiBaseUrl,
     resolveEndpointWithBase,
 } from "../services/api";
+import { API_BASE_URL as BUILDTIME_API_BASE_URL } from "../services/http";
 import {
     countRowsMatchingCriteria,
     getEnabledCriteriaColumns,
@@ -41,10 +42,10 @@ const DEFAULT_CONTENT_ZOOM = 100;
 const MIN_CONTENT_ZOOM = 50;
 const MAX_CONTENT_ZOOM = 150;
 const ZOOM_STEP = 10;
-const API_BASE_URL =
-    getRememberedApiBaseUrl() ||
-    import.meta.env.VITE_API_URL ||
-    "http://127.0.0.1:5000";
+// 빌드 시점 기본 URL 해석은 services/http.js에 일원화되어 있다.
+// (VITE_API_URL이 명시적 빈 문자열이면 same-origin 모드 → window.location.origin)
+// localStorage에 저장된 값이 있으면 그것을 우선한다.
+const API_BASE_URL = getRememberedApiBaseUrl() || BUILDTIME_API_BASE_URL;
 const WIDGET_TYPE_TABLE = "table";
 const WIDGET_TYPE_HEALTH_CHECK = "health-check";
 const WIDGET_TYPE_LINE_CHART = "line-chart";
@@ -257,10 +258,9 @@ const DashboardPage = () => {
         (state) => state.importDashboardConfig,
     );
 
+    // 빌드 시점 기본값 해석은 services/http.js에 일원화 (same-origin 모드 포함)
     const rememberedApiBaseUrl =
-        getRememberedApiBaseUrl() ||
-        import.meta.env.VITE_API_URL ||
-        "http://127.0.0.1:5000";
+        getRememberedApiBaseUrl() || BUILDTIME_API_BASE_URL;
 
     const [showAddApi, setShowAddApi] = useState(false);
     const [showDashboardSettings, setShowDashboardSettings] = useState(false);

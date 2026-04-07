@@ -387,9 +387,19 @@ const NetworkTestCard = ({
     }, [targetStates]);
 
     /* ── render: settings popup ──────────────────────────────────── */
+    // 외부 클릭으로는 닫히지 않는다 — 헤더의 ✕ 버튼 / 하단 닫기 버튼으로만 닫힌다.
+    // (사용자 요구: 바깥쪽 오클릭으로 설정 변경이 날아가는 것을 방지)
     const settingsPopup = showSettings ? (
-        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
-            <div className="settings-popup srv-settings-popup" onClick={(e) => e.stopPropagation()}>
+        <div
+            className="settings-overlay"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+        >
+            <div
+                className="settings-popup srv-settings-popup"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div className="settings-popup-header">
                     <div>
                         <h5>네트워크 테스트 위젯 설정</h5>

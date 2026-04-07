@@ -42,6 +42,9 @@ a = Analysis(
         'paramiko',
         # HTTP client (health-check proxy)
         'requests',
+        # Production WSGI server (lazy-imported in _run_server, so PyInstaller
+        # cannot detect it via static analysis — must be listed explicitly)
+        'waitress',
     ],
     hookspath=[],
     hooksconfig={},

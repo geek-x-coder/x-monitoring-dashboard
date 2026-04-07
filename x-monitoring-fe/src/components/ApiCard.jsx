@@ -353,6 +353,22 @@ const ApiCard = ({
     }, [availableColumns]); // only run when columns change, not on every width update
 
     const criteriaTimerRef = useRef(null);
+
+    // 디바운스 setTimeout — 위젯이 디바운스 윈도우 안에서 언마운트되면
+    // 콜백이 살아남아 unmounted 컴포넌트에 setState를 호출하므로 정리한다.
+    useEffect(() => {
+        return () => {
+            if (columnWidthTimerRef.current) {
+                clearTimeout(columnWidthTimerRef.current);
+                columnWidthTimerRef.current = null;
+            }
+            if (criteriaTimerRef.current) {
+                clearTimeout(criteriaTimerRef.current);
+                criteriaTimerRef.current = null;
+            }
+        };
+    }, []);
+
     const handleCriteriaChange = useCallback((column, patch) => {
         const nextCriteria = {
             ...criteriaMap,

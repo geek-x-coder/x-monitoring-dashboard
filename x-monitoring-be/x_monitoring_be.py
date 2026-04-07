@@ -93,6 +93,10 @@ limiter = Limiter(
 
 # ── Middleware ────────────────────────────────────────────────────────────────
 
+from time import perf_counter as _request_perf_counter
+from flask import g as _flask_g
+
+
 @app.after_request
 def add_cors_headers(response):
     response.headers["Access-Control-Allow-Origin"] = "*"
@@ -105,7 +109,28 @@ def add_cors_headers(response):
 def handle_preflight():
     if request.method == "OPTIONS":
         return "", 204
+    if backend.logger.isEnabledFor(logging.DEBUG):
+        _flask_g._req_started = _request_perf_counter()
+        backend.logger.debug(
+            "HTTP request method=%s path=%s query=%s clientIp=%s",
+            request.method, request.path, request.query_string.decode("utf-8", "replace"),
+            get_client_ip(),
+        )
     return None
+
+
+@app.after_request
+def log_request_completion(response):
+    if backend.logger.isEnabledFor(logging.DEBUG):
+        started = getattr(_flask_g, "_req_started", None)
+        duration_ms = (
+            int((_request_perf_counter() - started) * 1000) if started is not None else -1
+        )
+        backend.logger.debug(
+            "HTTP response method=%s path=%s status=%s durationMs=%s clientIp=%s",
+            request.method, request.path, response.status_code, duration_ms, get_client_ip(),
+        )
+    return response
 
 # ── Auth routes ───────────────────────────────────────────────────────────────
 
@@ -430,16 +455,21 @@ def server_resources():
             import paramiko
         except ImportError:
             return "ERROR: paramiko not installed (pip install paramiko)"
+        client = None
         try:
             client = paramiko.SSHClient()
             client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             client.connect(host, port=ssh_port, username=username, password=password, timeout=10)
-            _, stdout, stderr = client.exec_command(cmd, timeout=10)
-            output = stdout.read().decode("utf-8", errors="replace").strip()
-            client.close()
-            return output
+            _, stdout, _stderr = client.exec_command(cmd, timeout=10)
+            return stdout.read().decode("utf-8", errors="replace").strip()
         except Exception as e:
             return f"ERROR: {e}"
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception:
+                    pass
 
     def run_cmd(cmd, shell=True):
         if is_local:
@@ -766,16 +796,21 @@ def server_resources_batch():
                 import paramiko
             except ImportError:
                 return "ERROR: paramiko not installed (pip install paramiko)"
+            client = None
             try:
                 client = paramiko.SSHClient()
                 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 client.connect(host, port=ssh_port, username=username, password=password, timeout=10)
-                _, stdout, stderr = client.exec_command(cmd, timeout=10)
-                output = stdout.read().decode("utf-8", errors="replace").strip()
-                client.close()
-                return output
+                _, stdout, _stderr = client.exec_command(cmd, timeout=10)
+                return stdout.read().decode("utf-8", errors="replace").strip()
             except Exception as e:
                 return f"ERROR: {e}"
+            finally:
+                if client is not None:
+                    try:
+                        client.close()
+                    except Exception:
+                        pass
 
         def run_cmd(cmd, shell=True):
             if is_local:
@@ -1042,12 +1077,12 @@ def network_test():
             return jsonify({"message": "port is required for telnet test"}), 400
         port = int(port)
         started = _time.monotonic()
+        sock = None
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(timeout)
             result_code = sock.connect_ex((host, port))
             elapsed_ms = int((_time.monotonic() - started) * 1000)
-            sock.close()
             success = result_code == 0
             return jsonify({
                 "type": "telnet",
@@ -1077,6 +1112,12 @@ def network_test():
                 "responseTimeMs": elapsed_ms,
                 "message": str(e),
             }), 200
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
 
     # Ping test
     is_windows = platform.system().lower() == "windows"
@@ -1173,12 +1214,12 @@ def network_test_batch():
                 continue
             t_port = int(t_port)
             started = _time.monotonic()
+            sock = None
             try:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 sock.settimeout(t_timeout)
                 result_code = sock.connect_ex((t_host, t_port))
                 elapsed_ms = int((_time.monotonic() - started) * 1000)
-                sock.close()
                 success = result_code == 0
                 results.append({
                     "type": "telnet", "host": t_host, "port": t_port,
@@ -1199,6 +1240,12 @@ def network_test_batch():
                     "success": False, "responseTimeMs": elapsed_ms,
                     "message": str(e),
                 })
+            finally:
+                if sock is not None:
+                    try:
+                        sock.close()
+                    except Exception:
+                        pass
             continue
 
         # Ping test
@@ -1267,7 +1314,7 @@ def health_check_proxy():
     # Use stdlib if requests is not available
     if _requests is None:
         from urllib.request import urlopen, Request
-        from urllib.error import URLError, HTTPError
+        from urllib.error import HTTPError
         started = _time.monotonic()
         try:
             req = Request(target_url, method="GET")
@@ -1306,17 +1353,22 @@ def health_check_proxy():
 
     started = _time.monotonic()
     try:
+        # `with` 블록으로 Response를 명시적으로 닫아 소켓/커넥션 풀 엔트리가
+        # GC 시점까지 살아남는 것을 방지한다. (대량 호출 시 파일 핸들 누수 예방)
         with _warnings.catch_warnings():
             _warnings.filterwarnings("ignore", category=_InsecureRequestWarning)
-            resp = _requests.get(target_url, timeout=timeout_sec, verify=False, allow_redirects=True)
-        elapsed_ms = int((_time.monotonic() - started) * 1000)
-        try:
-            body = resp.text[:4096]
-        except Exception:
-            body = None
+            with _requests.get(
+                target_url, timeout=timeout_sec, verify=False, allow_redirects=True, stream=False,
+            ) as resp:
+                elapsed_ms = int((_time.monotonic() - started) * 1000)
+                try:
+                    body = resp.text[:4096]
+                except Exception:
+                    body = None
+                status_code = resp.status_code
         return jsonify({
-            "ok": 200 <= resp.status_code < 400,
-            "httpStatus": resp.status_code,
+            "ok": 200 <= status_code < 400,
+            "httpStatus": status_code,
             "responseTimeMs": elapsed_ms,
             "body": body,
             "error": None,
@@ -1372,7 +1424,7 @@ def health_check_proxy_batch():
 
         if _requests is None:
             from urllib.request import urlopen, Request
-            from urllib.error import URLError, HTTPError
+            from urllib.error import HTTPError
             started = _time.monotonic()
             try:
                 req = Request(target_url, method="GET")
@@ -1400,15 +1452,19 @@ def health_check_proxy_batch():
         try:
             with _warnings.catch_warnings():
                 _warnings.filterwarnings("ignore", category=_InsecureRequestWarning)
-                resp = _requests.get(target_url, timeout=timeout_sec, verify=False, allow_redirects=True)
-            elapsed_ms = int((_time.monotonic() - started) * 1000)
-            try:
-                resp_body = resp.text[:4096]
-            except Exception:
-                resp_body = None
+                # Response를 with 로 닫아 커넥션 풀 엔트리/소켓 누수 방지
+                with _requests.get(
+                    target_url, timeout=timeout_sec, verify=False, allow_redirects=True, stream=False,
+                ) as resp:
+                    elapsed_ms = int((_time.monotonic() - started) * 1000)
+                    try:
+                        resp_body = resp.text[:4096]
+                    except Exception:
+                        resp_body = None
+                    status_code = resp.status_code
             results.append({
-                "id": item_id, "ok": 200 <= resp.status_code < 400,
-                "httpStatus": resp.status_code, "responseTimeMs": elapsed_ms,
+                "id": item_id, "ok": 200 <= status_code < 400,
+                "httpStatus": status_code, "responseTimeMs": elapsed_ms,
                 "body": resp_body, "error": None,
             })
         except Exception as e:
@@ -1497,8 +1553,26 @@ def execute_endpoint(requested_path: str):
         )
         return jsonify({"message": "endpoint not found"}), 404
 
+    # ?fresh=1 → 캐시를 우회하고 즉시 쿼리를 재실행한다.
+    # 알람 판정처럼 실시간성이 필요한 호출에서 사용 (criteria 기반 알람 등).
+    fresh_param = request.args.get("fresh", "").strip().lower()
+    bypass_cache = fresh_param in ("1", "true", "yes")
+
     try:
-        data = backend.get_cached_endpoint_response(endpoint, client_ip)
+        if bypass_cache:
+            entry = backend.refresh_endpoint_cache(
+                endpoint, source="on-demand-fresh", client_ip=client_ip,
+            )
+            if entry.data is None:
+                raise CachedEndpointError(
+                    endpoint.api_id,
+                    entry.error_message or "Internal Server Error",
+                    detail=entry.error_detail,
+                    is_timeout=entry.is_timeout,
+                )
+            data = entry.data
+        else:
+            data = backend.get_cached_endpoint_response(endpoint, client_ip)
     except SqlFileNotFoundError as error:
         return jsonify({
             "message": str(error), "apiId": endpoint.api_id, "detail": f"expectedPath: {error.sql_path}",
@@ -1530,19 +1604,55 @@ def handle_unexpected_server_error(error):
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
-if __name__ == "__main__":
-    try:
-        backend.logger.info(
-            "Starting MonitoringBackend host=%s port=%s",
-            backend.config.host, backend.config.port,
-        )
+def _run_server() -> None:
+    """Start the HTTP server.
+
+    서버 선택 규칙:
+      - 환경변수 USE_WAITRESS=1  또는 USE_WAITRESS 미설정 + 프로덕션 모드(기본)
+        → waitress (운영용 WSGI, Windows 서비스 권장)
+      - 환경변수 USE_WAITRESS=0 또는 FLASK_ENV=development
+        → werkzeug (개발 서버; 자동 리로드는 사용 안 함)
+
+    Windows 서비스로 등록해 사용하는 경우 NSSM 등에서 이 진입점을 그대로 호출하면 된다.
+    """
+    use_waitress_env = (get_env("USE_WAITRESS", "1") or "1").strip().lower()
+    flask_env = (get_env("FLASK_ENV", "production") or "production").strip().lower()
+    use_waitress = use_waitress_env in ("1", "true", "yes") and flask_env != "development"
+
+    host = backend.config.host
+    port = backend.config.port
+
+    if use_waitress:
+        try:
+            from waitress import serve as _waitress_serve
+        except ImportError:
+            backend.logger.warning(
+                "waitress not installed — falling back to werkzeug development server. "
+                "Install with: pip install waitress",
+            )
+            use_waitress = False
+
+    backend.logger.info(
+        "Starting MonitoringBackend host=%s port=%s server=%s",
+        host, port, "waitress" if use_waitress else "werkzeug",
+    )
+
+    if use_waitress:
+        threads = int(get_env("WAITRESS_THREADS", "16"))
+        _waitress_serve(app, host=host, port=port, threads=threads, ident="x-monitoring-be")
+    else:
         app.run(
             debug=False,
-            host=backend.config.host,
-            port=backend.config.port,
+            host=host,
+            port=port,
             threaded=True,
             use_reloader=False,
         )
+
+
+if __name__ == "__main__":
+    try:
+        _run_server()
     except Exception:
         backend.logger.exception("FATAL: MonitoringBackend terminated unexpectedly")
         raise

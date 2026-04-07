@@ -533,6 +533,20 @@ const ServerResourceCard = ({
 
     useEffect(() => { serversRef.current = servers; }, [servers]);
 
+    // 서버 목록이 변하면 historyRef에서 사라진 서버의 히스토리 키를 정리한다.
+    // (각 키는 MAX_HISTORY로 cap되지만, 잦은 추가/삭제 시 유령 키가 누적될 수 있음)
+    useEffect(() => {
+        const liveIds = new Set(servers.map((s) => s.id));
+        let purged = false;
+        Object.keys(historyRef.current).forEach((id) => {
+            if (!liveIds.has(id)) {
+                delete historyRef.current[id];
+                purged = true;
+            }
+        });
+        if (purged) setHistoryVersion((v) => v + 1);
+    }, [servers]);
+
     const fetchAllServers = useCallback(async () => {
         const list = serversRef.current;
         if (list.length === 0) return;
@@ -787,9 +801,19 @@ const ServerResourceCard = ({
     }, [serverStates]);
 
     /* ── render: settings popup ──────────────────────────────────── */
+    // 외부 클릭으로는 닫히지 않는다 — 헤더의 ✕ 버튼으로만 닫힌다.
+    // (사용자 요구: 바깥쪽 오클릭으로 설정 변경이 날아가는 것을 방지)
     const settingsPopup = showSettings ? (
-        <div className="settings-overlay" onClick={() => setShowSettings(false)}>
-            <div className="settings-popup srv-settings-popup" onClick={(e) => e.stopPropagation()}>
+        <div
+            className="settings-overlay"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+        >
+            <div
+                className="settings-popup srv-settings-popup"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div className="settings-popup-header">
                     <div>
                         <h5>서버 리소스 위젯 설정</h5>

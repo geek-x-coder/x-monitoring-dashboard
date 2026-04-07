@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { dataService, healthService } from "../services/dashboardService.js";
 import { formatErrorMessage } from "../services/http.js";
+import { getEnabledCriteriaColumns } from "../utils/helpers.js";
 
 const clampIntervalSec = (value) => {
     const n = Number(value);
@@ -17,13 +18,26 @@ const resolveWidgetType = (widget) => {
     return "table";
 };
 
+/**
+ * criteria 기반 알람이 활성화된 테이블 위젯인지 판정.
+ * 활성화된 경우 백엔드 캐시를 우회(?fresh=1)해 실시간 상태로 알람을 평가해야 한다.
+ */
+const widgetNeedsFreshData = (widget) => {
+    if (resolveWidgetType(widget) !== "table") return false;
+    const criteria = widget?.tableSettings?.criteria;
+    if (!criteria) return false;
+    return getEnabledCriteriaColumns(criteria).length > 0;
+};
+
 const scheduleKeyFor = (widget) => {
     const intervalSec = clampIntervalSec(widget.refreshIntervalSec ?? 5);
     const target =
         resolveWidgetType(widget) === "status-list"
             ? JSON.stringify(widget.endpoints || [])
             : widget.endpoint;
-    return `${target}::${intervalSec}`;
+    // fresh 모드 토글도 키에 포함 — 알람 criteria가 켜지거나 꺼지면 즉시 재스케줄
+    const freshFlag = widgetNeedsFreshData(widget) ? "fresh" : "cached";
+    return `${target}::${intervalSec}::${freshFlag}`;
 };
 
 const useWidgetApiData = (widgets) => {
@@ -71,7 +85,9 @@ const useWidgetApiData = (widgets) => {
             if (widgetType === "status-list") {
                 return healthService.checkMultipleEndpointsHealth(widget.endpoints);
             }
-            return dataService.getApiData(widgetId, widget.endpoint);
+            return dataService.getApiData(widgetId, widget.endpoint, {
+                fresh: widgetNeedsFreshData(widget),
+            });
         })()
             .then((data) => {
                 if (widgetType === "health-check") {

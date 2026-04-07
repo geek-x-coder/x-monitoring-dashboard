@@ -145,8 +145,17 @@ export default function ConfigEditorModal({ open, onClose }) {
             setServer(data.server || {});
             setAuth(data.auth || {});
             setLogging(data.logging || {});
-            setConnections(Array.isArray(data.connections) ? data.connections : []);
-            setApis(Array.isArray(data.apis) ? data.apis : []);
+            const loadedConnections = Array.isArray(data.connections) ? data.connections : [];
+            const loadedApis = Array.isArray(data.apis) ? data.apis : [];
+            setConnections(loadedConnections);
+            setApis(loadedApis);
+            // 이미 등록되어 있는 항목들은 기본적으로 접힌 상태로 보여 화면이 길어지는 것을 방지한다.
+            setCollapsedConns(
+                Object.fromEntries(loadedConnections.map((_, i) => [i, true])),
+            );
+            setCollapsedApis(
+                Object.fromEntries(loadedApis.map((_, i) => [i, true])),
+            );
             setGlobalJdbcJars(data.global_jdbc_jars || "");
             setSqlValidation(data.sql_validation || {});
             setRawJson(JSON.stringify(data, null, 2));
@@ -226,8 +235,16 @@ export default function ConfigEditorModal({ open, onClose }) {
                 setServer(data.server || {});
                 setAuth(data.auth || {});
                 setLogging(data.logging || {});
-                setConnections(Array.isArray(data.connections) ? data.connections : []);
-                setApis(Array.isArray(data.apis) ? data.apis : []);
+                const parsedConnections = Array.isArray(data.connections) ? data.connections : [];
+                const parsedApis = Array.isArray(data.apis) ? data.apis : [];
+                setConnections(parsedConnections);
+                setApis(parsedApis);
+                setCollapsedConns(
+                    Object.fromEntries(parsedConnections.map((_, i) => [i, true])),
+                );
+                setCollapsedApis(
+                    Object.fromEntries(parsedApis.map((_, i) => [i, true])),
+                );
                 setGlobalJdbcJars(data.global_jdbc_jars || "");
                 setSqlValidation(data.sql_validation || {});
             } catch {
@@ -244,6 +261,16 @@ export default function ConfigEditorModal({ open, onClose }) {
     };
     const handleConnectionRemove = (idx) => {
         setConnections((prev) => prev.filter((_, i) => i !== idx));
+        // 인덱스 기반 접힘 상태도 한 칸씩 당겨준다 (잘못된 카드가 접혀 보이는 것 방지).
+        setCollapsedConns((prev) => {
+            const next = {};
+            Object.keys(prev).forEach((k) => {
+                const i = Number(k);
+                if (i < idx) next[i] = prev[k];
+                else if (i > idx) next[i - 1] = prev[k];
+            });
+            return next;
+        });
     };
     const handleConnectionAdd = () => {
         setConnections((prev) => [
@@ -259,6 +286,15 @@ export default function ConfigEditorModal({ open, onClose }) {
     };
     const handleApiRemove = (idx) => {
         setApis((prev) => prev.filter((_, i) => i !== idx));
+        setCollapsedApis((prev) => {
+            const next = {};
+            Object.keys(prev).forEach((k) => {
+                const i = Number(k);
+                if (i < idx) next[i] = prev[k];
+                else if (i > idx) next[i - 1] = prev[k];
+            });
+            return next;
+        });
     };
     const handleApiAdd = () => {
         setApis((prev) => [
@@ -269,9 +305,24 @@ export default function ConfigEditorModal({ open, onClose }) {
 
     if (!open) return null;
 
+    // 배경(overlay) 클릭으로 팝업이 닫히지 않도록 보장한다.
+    // 사용자 요구: 명시적인 "닫기" 버튼(헤더 ✕ / 푸터 닫기)으로만 닫는다.
+    // onMouseDown까지 삼켜야 드래그 선택 → 외부 mouseup에서 닫힘이 발생하는 케이스도 방지된다.
+    const handleOverlayMouseEvent = (e) => {
+        e.stopPropagation();
+    };
+
     const content = (
-        <div className="settings-overlay">
-            <div className="settings-popup cfg-editor-popup" onClick={(e) => e.stopPropagation()}>
+        <div
+            className="settings-overlay"
+            onMouseDown={handleOverlayMouseEvent}
+            onClick={handleOverlayMouseEvent}
+        >
+            <div
+                className="settings-popup cfg-editor-popup"
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+            >
                 <div className="settings-popup-header">
                     <div>
                         <h5>백엔드 설정 (config.json)</h5>

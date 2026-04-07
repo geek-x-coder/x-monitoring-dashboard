@@ -12,7 +12,7 @@ from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
-from .cache import EndpointCacheEntry, QueryCache
+from .cache import EndpointCacheEntry
 from .config import ApiEndpointConfig, AppConfig, load_app_config
 from .db import DBConnectionPool, ensure_jvm_started
 from .exceptions import CachedEndpointError, QueryExecutionTimeoutError, SqlFileNotFoundError
@@ -210,7 +210,8 @@ class MonitoringBackend:
             max_workers=self.config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
         )
-        self.cache = QueryCache(ttl_sec=int(get_env("CACHE_TTL_SEC", "300")))
+        # 과거 QueryCache 인스턴스가 있었으나 어디서도 .set()이 호출되지 않는
+        # 데드 코드였음 → 제거. 실제 캐싱은 endpoint_cache(EndpointCacheEntry)로만 이뤄진다.
         self.sql_file_signatures: dict[str, str] = {}
         self.sql_file_lock = threading.Lock()
         self.endpoint_cache: dict[str, EndpointCacheEntry] = {}
@@ -299,8 +300,17 @@ class MonitoringBackend:
         endpoint = self.config.apis.get(api_id)
         if endpoint is None or not endpoint.enabled:
             return
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "Scheduler thread started apiId=%s intervalSec=%s",
+                api_id, endpoint.refresh_interval_sec,
+            )
         while not self.scheduler_stop_event.wait(endpoint.refresh_interval_sec):
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug("Scheduler tick apiId=%s", api_id)
             self.refresh_endpoint_cache(endpoint, source="scheduler", client_ip="scheduler")
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug("Scheduler thread exited apiId=%s", api_id)
 
     # ── Cache management ──────────────────────────────────────────────────
 
@@ -432,13 +442,30 @@ class MonitoringBackend:
     def get_cached_endpoint_response(self, endpoint: ApiEndpointConfig, client_ip: str) -> Any:
         entry = self.get_cached_endpoint_entry(endpoint.api_id)
         if entry and entry.data is not None:
+            if self.logger.isEnabledFor(logging.DEBUG):
+                row_count = len(entry.data) if isinstance(entry.data, list) else 1
+                self.logger.debug(
+                    "Cache HIT apiId=%s path=%s rowCount=%d updatedAt=%s source=%s clientIp=%s",
+                    endpoint.api_id, endpoint.rest_api_path, row_count,
+                    entry.updated_at, entry.source, client_ip,
+                )
             return entry.data
 
         if entry and entry.error_message:
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    "Cache HIT (error) apiId=%s message=%s isTimeout=%s clientIp=%s",
+                    endpoint.api_id, entry.error_message, entry.is_timeout, client_ip,
+                )
             raise CachedEndpointError(
                 endpoint.api_id, entry.error_message, detail=entry.error_detail, is_timeout=entry.is_timeout,
             )
 
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                "Cache MISS apiId=%s path=%s — refreshing on-demand clientIp=%s",
+                endpoint.api_id, endpoint.rest_api_path, client_ip,
+            )
         refreshed_entry = self.refresh_endpoint_cache(endpoint, source="on-demand", client_ip=client_ip)
         if refreshed_entry.data is not None:
             return refreshed_entry.data
@@ -472,12 +499,22 @@ class MonitoringBackend:
         try:
             sql = load_sql_file(endpoint.sql_id, sql_dir, self.logger)
             self._track_sql_change(endpoint, sql)
+            if self.logger.isEnabledFor(logging.DEBUG):
+                sql_preview = " ".join(sql.split())[:200]
+                self.logger.debug(
+                    "JDBC execute begin apiId=%s sqlId=%s connectionId=%s sqlPreview=%r",
+                    endpoint.api_id, endpoint.sql_id, endpoint.connection_id, sql_preview,
+                )
             cursor = jdbc_conn.cursor()
             cursor.execute(sql)
 
             if cursor.description is None:
                 jdbc_conn.commit()
-                elapsed = perf_counter() - start_time
+                if self.logger.isEnabledFor(logging.DEBUG):
+                    self.logger.debug(
+                        "JDBC execute end (DML) apiId=%s rowCount=%s durationSec=%.3f",
+                        endpoint.api_id, cursor.rowcount, perf_counter() - start_time,
+                    )
                 return {"updated": cursor.rowcount}
 
             columns = [desc[0] for desc in cursor.description]
@@ -486,7 +523,11 @@ class MonitoringBackend:
                 {col: to_jsonable(val) for col, val in zip(columns, row)}
                 for row in rows
             ]
-            elapsed = perf_counter() - start_time
+            if self.logger.isEnabledFor(logging.DEBUG):
+                self.logger.debug(
+                    "JDBC execute end (SELECT) apiId=%s columns=%s rowCount=%d durationSec=%.3f",
+                    endpoint.api_id, columns, len(result), perf_counter() - start_time,
+                )
             return result
         except Exception:
             elapsed = perf_counter() - start_time
@@ -842,23 +883,37 @@ class MonitoringBackend:
         old_executor = self.executor
 
         self._stop_background_refreshers()
+
+        # 1) 새 executor부터 준비 — in-flight 작업들이 구 executor에서 종료되길 기다리는
+        #    동안에도 새 요청을 처리할 수 있도록 executor 교체를 먼저 한다.
+        new_executor = ThreadPoolExecutor(
+            max_workers=new_config.thread_pool_size,
+            thread_name_prefix="jdbc-worker",
+        )
+        self.executor = new_executor
+
+        # 2) 구 executor를 gracefully drain.
+        #    wait=True로 기다려야 한다: wait=False면 구 executor에 제출된 in-flight
+        #    _execute_jdbc 잡들이 이후 _close_all_pools() 로 닫힌 커넥션을 참조하게
+        #    되어 예외가 튀고, 최악의 경우 JDBC 리소스가 정리되지 않은 채 남는다.
+        try:
+            old_executor.shutdown(wait=True, cancel_futures=True)
+        except TypeError:
+            # Python 3.8 호환 (cancel_futures는 3.9+)
+            old_executor.shutdown(wait=True)
+
+        # 3) 이제 구 풀을 안전하게 닫는다 (in-flight 잡이 없음이 보장됨).
         self._close_all_pools()
 
         configure_logging(new_config.logging)
         self.logger = logging.getLogger("monitoring_backend")
         self.config = new_config
-        self.executor = ThreadPoolExecutor(
-            max_workers=new_config.thread_pool_size,
-            thread_name_prefix="jdbc-worker",
-        )
-        self.cache.clear()
         with self.endpoint_cache_lock:
             self.endpoint_cache.clear()
         self.db_pools = {
             conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
             for conn_id in new_config.connections
         }
-        old_executor.shutdown(wait=False)
         self._start_background_refreshers()
 
         enabled_apis = [ep for ep in new_config.apis.values() if ep.enabled]

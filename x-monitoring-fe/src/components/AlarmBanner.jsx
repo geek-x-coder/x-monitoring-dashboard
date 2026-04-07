@@ -6,9 +6,28 @@ import React, { useEffect, useRef, useCallback } from "react";
 import { useAlarmStore } from "../store/alarmStore.js";
 import "./AlarmBanner.css";
 
+// 모듈 단위 단일 AudioContext 인스턴스.
+// 매 호출마다 새 AudioContext를 만들면 브라우저당 인스턴스 한도(Chrome ≈ 6)에
+// 빠르게 도달하여 알람이 더 이상 울리지 않게 된다 (메모리/리소스 누수).
+let _sharedAudioCtx = null;
+const getAudioCtx = () => {
+    if (_sharedAudioCtx) {
+        // 자동재생 정책으로 suspended 상태일 수 있음 — 사용자 인터랙션 후 resume 시도
+        if (_sharedAudioCtx.state === "suspended") {
+            _sharedAudioCtx.resume().catch(() => {});
+        }
+        return _sharedAudioCtx;
+    }
+    const Ctor = window.AudioContext || window.webkitAudioContext;
+    if (!Ctor) return null;
+    _sharedAudioCtx = new Ctor();
+    return _sharedAudioCtx;
+};
+
 const playSound = (type = "beep") => {
     try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const ctx = getAudioCtx();
+        if (!ctx) return;
 
         if (type === "siren") {
             // 사이렌: 300→1400→300 Hz 넓은 범위 스윕 × 3회, sawtooth (거친 경보음)

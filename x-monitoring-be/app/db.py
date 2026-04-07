@@ -92,12 +92,23 @@ class DBConnectionPool:
 
     def _create_connection(self, jdbc_config):
         ensure_jvm_started()
-        return jaydebeapi.connect(
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug(
+                "JDBC connect attempt driverClass=%s jdbcUrl=%s",
+                jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url,
+            )
+        conn = jaydebeapi.connect(
             jdbc_config.jdbc_driver_class,
             jdbc_config.jdbc_url,
             jdbc_config.driver_args,
             list(jdbc_config.jdbc_jars),
         )
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug(
+                "JDBC connect success driverClass=%s jdbcUrl=%s",
+                jdbc_config.jdbc_driver_class, jdbc_config.jdbc_url,
+            )
+        return conn
 
     def _is_connection_open(self, conn) -> bool:
         if conn is None:
@@ -123,8 +134,15 @@ class DBConnectionPool:
             while self.available:
                 conn = self.available.pop()
                 if self._is_connection_open(conn):
+                    if _logger.isEnabledFor(logging.DEBUG):
+                        _logger.debug(
+                            "JDBC pool reuse jdbcUrl=%s availableAfter=%d",
+                            jdbc_config.jdbc_url, len(self.available),
+                        )
                     return conn
                 self._safe_close(conn)
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug("JDBC pool miss — creating new connection jdbcUrl=%s", jdbc_config.jdbc_url)
         return self._create_connection(jdbc_config)
 
     def return_connection(self, conn) -> None:
@@ -132,12 +150,19 @@ class DBConnectionPool:
             return
         if not self._is_connection_open(conn):
             self._safe_close(conn)
+            if _logger.isEnabledFor(logging.DEBUG):
+                _logger.debug("JDBC pool return discarded reason=connection_closed")
             return
         with self.lock:
             if len(self.available) < self.max_size:
                 self.available.append(conn)
+                if _logger.isEnabledFor(logging.DEBUG):
+                    _logger.debug("JDBC pool return ok availableNow=%d maxSize=%d",
+                                  len(self.available), self.max_size)
                 return
         self._safe_close(conn)
+        if _logger.isEnabledFor(logging.DEBUG):
+            _logger.debug("JDBC pool return discarded reason=pool_full maxSize=%d", self.max_size)
 
     def discard_connection(self, conn) -> None:
         self._safe_close(conn)

@@ -21,8 +21,17 @@ export const endpointService = {
 // ── Data fetching ─────────────────────────────────────────────────────────────
 
 export const dataService = {
-    getApiData: async (_apiId, endpoint) => {
-        const response = await apiClient.get(endpoint);
+    /**
+     * @param {string|null} _apiId  (호환성을 위해 유지, 사용 안 함)
+     * @param {string} endpoint     호출할 경로/URL
+     * @param {{fresh?: boolean}} [options]  fresh=true 면 백엔드 캐시를 우회 (?fresh=1).
+     *        criteria 기반 알람처럼 실시간성이 필요한 폴링에서 사용.
+     */
+    getApiData: async (_apiId, endpoint, options = {}) => {
+        const url = options?.fresh
+            ? `${endpoint}${endpoint.includes("?") ? "&" : "?"}fresh=1`
+            : endpoint;
+        const response = await apiClient.get(url);
         return response.data;
     },
 
