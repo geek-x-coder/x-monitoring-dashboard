@@ -13,6 +13,8 @@ a = Analysis(
     datas=[
         # app package (all .py modules)
         ('app/*.py', 'app'),
+        # app.routes subpackage
+        ('app/routes/*.py', 'app/routes'),
     ],
     hiddenimports=[
         'app',
@@ -20,11 +22,26 @@ a = Analysis(
         'app.cache',
         'app.config',
         'app.db',
+        'app.db_health_service',
         'app.exceptions',
+        'app.jdbc_executor',
+        'app.log_reader',
+        'app.sql_editor_service',
+        'app.http_health_checker',
         'app.logging_setup',
+        'app.network_tester',
+        'app.server_resource_collector',
         'app.service',
         'app.sql_validator',
         'app.utils',
+        'app.routes',
+        'app.routes.auth_routes',
+        'app.routes.dashboard_routes',
+        'app.routes.dynamic_routes',
+        'app.routes.health_proxy_routes',
+        'app.routes.network_routes',
+        'app.routes.server_routes',
+        'app.routes.system_routes',
         # Flask / Werkzeug internals sometimes missed
         'flask',
         'flask_cors',
