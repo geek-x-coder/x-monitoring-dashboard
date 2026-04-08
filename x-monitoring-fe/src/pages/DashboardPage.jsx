@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { WidthProvider, Responsive } from "react-grid-layout/legacy";
 import { useNavigate } from "react-router-dom";
 import { useWidgetApiData } from "../hooks/useApi";
@@ -16,222 +16,50 @@ import {
 } from "../utils/helpers";
 import { useDashboardStore } from "../store/dashboardStore";
 import { useAuthStore } from "../store/authStore";
-import { useAlarmStore, SOUND_TYPES } from "../store/alarmStore";
-import ApiCard from "../components/ApiCard";
-import HealthCheckCard from "../components/HealthCheckCard";
-import LineChartCard from "../components/LineChartCard";
-import BarChartCard from "../components/BarChartCard";
-import StatusListCard from "../components/StatusListCard";
+import { useAlarmStore } from "../store/alarmStore";
 import AlarmBanner from "../components/AlarmBanner";
-import NetworkTestCard from "../components/NetworkTestCard";
-import ServerResourceCard from "../components/ServerResourceCard";
 import SqlEditorModal from "../components/SqlEditorModal";
 import ConfigEditorModal from "../components/ConfigEditorModal";
+import DashboardHeader from "./DashboardHeader";
+import AddApiModal from "./AddApiModal";
+import DashboardSettingsModal from "./DashboardSettingsModal";
+import WidgetRenderer from "./WidgetRenderer";
+import {
+    DEFAULT_CONTENT_ZOOM,
+    DEFAULT_REFRESH_INTERVAL_SEC,
+    DEFAULT_WIDGET_FONT_SIZE,
+    DEFAULT_WIDGET_LAYOUT,
+    GRID_COLUMNS,
+    MAX_CONTENT_ZOOM,
+    MAX_WIDGET_H,
+    MAX_WIDGET_W,
+    MIN_CONTENT_ZOOM,
+    MIN_WIDGET_H,
+    MIN_WIDGET_W,
+    WIDGET_TYPE_NETWORK_TEST,
+    WIDGET_TYPE_SERVER_RESOURCE,
+    WIDGET_TYPE_STATUS_LIST,
+    WIDGET_TYPE_TABLE,
+} from "./dashboardConstants";
+import {
+    clampValue,
+    createDefaultApis,
+    createStatusListWidget,
+    layoutArrayToMap,
+    normalizeWidgetLayout,
+    parseStatusListInput,
+} from "./dashboardHelpers";
 import "react-grid-layout/css/styles.css";
 import "react-resizable/css/styles.css";
 import "./DashboardPage.css";
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
-const MIN_WIDGET_W = 2;
-const MAX_WIDGET_W = 12;
-const MIN_WIDGET_H = 2;
-const MAX_WIDGET_H = 24;
-const DEFAULT_REFRESH_INTERVAL_SEC = 5;
-const DEFAULT_WIDGET_FONT_SIZE = 13;
-const DEFAULT_CONTENT_ZOOM = 100;
-const MIN_CONTENT_ZOOM = 50;
-const MAX_CONTENT_ZOOM = 150;
-const ZOOM_STEP = 10;
 // 빌드 시점 기본 URL 해석은 services/http.js에 일원화되어 있다.
 // (VITE_API_URL이 명시적 빈 문자열이면 same-origin 모드 → window.location.origin)
 // localStorage에 저장된 값이 있으면 그것을 우선한다.
 const API_BASE_URL = getRememberedApiBaseUrl() || BUILDTIME_API_BASE_URL;
-const WIDGET_TYPE_TABLE = "table";
-const WIDGET_TYPE_HEALTH_CHECK = "health-check";
-const WIDGET_TYPE_LINE_CHART = "line-chart";
-const WIDGET_TYPE_BAR_CHART = "bar-chart";
-const WIDGET_TYPE_STATUS_LIST = "status-list";
-const WIDGET_TYPE_NETWORK_TEST = "network-test";
-const WIDGET_TYPE_SERVER_RESOURCE = "server-resource";
 
-const parseStatusListInput = (rawValue, baseUrl) => {
-    return String(rawValue ?? "")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line, index) => {
-            const [rawLabel, ...rawUrlTokens] = line.includes("|")
-                ? line.split("|")
-                : ["", line];
-            const urlValue =
-                rawUrlTokens.length > 0 ? rawUrlTokens.join("|") : rawLabel;
-            const normalizedUrl = resolveEndpointWithBase(
-                urlValue.trim(),
-                baseUrl,
-            );
-            const fallbackLabel = (() => {
-                try {
-                    const parsedUrl = new URL(normalizedUrl);
-                    return parsedUrl.pathname || normalizedUrl;
-                } catch {
-                    return normalizedUrl;
-                }
-            })();
-
-            return {
-                id: `status-list-item-${index}-${normalizedUrl}`,
-                label:
-                    (rawUrlTokens.length > 0
-                        ? rawLabel
-                        : fallbackLabel
-                    ).trim() || fallbackLabel,
-                url: normalizedUrl,
-            };
-        })
-        .filter((item) => item.url);
-};
-
-const createStatusListWidget = (baseUrl = API_BASE_URL) => ({
-    id: "api-status-list",
-    type: WIDGET_TYPE_STATUS_LIST,
-    title: "API Status List",
-    endpoints: [
-        { id: "status-health", label: "Health", url: `${baseUrl}/health` },
-        {
-            id: "status-endpoints",
-            label: "Endpoint Catalog",
-            url: `${baseUrl}/dashboard/endpoints`,
-        },
-        {
-            id: "status-logs",
-            label: "Log Dates",
-            url: `${baseUrl}/logs/available-dates`,
-        },
-    ],
-    defaultLayout: {
-        x: 0,
-        y: 5,
-        w: 4,
-        h: 5,
-        minW: MIN_WIDGET_W,
-        minH: MIN_WIDGET_H,
-    },
-    refreshIntervalSec: DEFAULT_REFRESH_INTERVAL_SEC,
-});
-
-const DEFAULT_APIS = [
-    {
-        id: "api-1",
-        type: WIDGET_TYPE_TABLE,
-        title: "CoinTrader Status",
-        endpoint: `${API_BASE_URL}/api/status`,
-        defaultLayout: {
-            x: 0,
-            y: 0,
-            w: 4,
-            h: 4,
-            minW: MIN_WIDGET_W,
-            minH: MIN_WIDGET_H,
-        },
-        refreshIntervalSec: DEFAULT_REFRESH_INTERVAL_SEC,
-        tableSettings: {
-            visibleColumns: [],
-            columnWidths: {},
-            criteria: {},
-        },
-    },
-    {
-        id: "api-2",
-        type: WIDGET_TYPE_TABLE,
-        title: "Application Alerts",
-        endpoint: `${API_BASE_URL}/api/alerts`,
-        defaultLayout: {
-            x: 4,
-            y: 0,
-            w: 4,
-            h: 4,
-            minW: MIN_WIDGET_W,
-            minH: MIN_WIDGET_H,
-        },
-        refreshIntervalSec: DEFAULT_REFRESH_INTERVAL_SEC,
-        tableSettings: {
-            visibleColumns: [],
-            columnWidths: {},
-            criteria: {},
-        },
-    },
-    {
-        id: "api-3",
-        type: WIDGET_TYPE_TABLE,
-        title: "System Metrics",
-        endpoint: `${API_BASE_URL}/api/metrics`,
-        defaultLayout: {
-            x: 8,
-            y: 0,
-            w: 4,
-            h: 5,
-            minW: MIN_WIDGET_W,
-            minH: MIN_WIDGET_H,
-        },
-        refreshIntervalSec: DEFAULT_REFRESH_INTERVAL_SEC,
-        tableSettings: {
-            visibleColumns: [],
-            columnWidths: {},
-            criteria: {},
-        },
-    },
-    // createStatusListWidget(API_BASE_URL),
-];
-
-const DEFAULT_WIDGET_LAYOUT = {
-    x: 0,
-    y: 0,
-    w: 4,
-    h: 4,
-    minW: MIN_WIDGET_W,
-    minH: MIN_WIDGET_H,
-};
-const GRID_COLUMNS = 12;
-
-const clampValue = (value, min, max, fallback) => {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-        return fallback;
-    }
-    return Math.min(max, Math.max(min, Math.floor(numericValue)));
-};
-
-const normalizeWidgetLayout = (widget, savedLayout) => {
-    const fallbackLayout = widget.defaultLayout ?? DEFAULT_WIDGET_LAYOUT;
-
-    return {
-        i: widget.id,
-        ...fallbackLayout,
-        ...savedLayout,
-        minW:
-            savedLayout?.minW ??
-            fallbackLayout.minW ??
-            DEFAULT_WIDGET_LAYOUT.minW,
-        minH:
-            savedLayout?.minH ??
-            fallbackLayout.minH ??
-            DEFAULT_WIDGET_LAYOUT.minH,
-    };
-};
-
-const layoutArrayToMap = (layoutItems, previousLayouts = {}) => {
-    return layoutItems.reduce((accumulator, item) => {
-        accumulator[item.i] = {
-            x: item.x,
-            y: item.y,
-            w: item.w,
-            h: item.h,
-            minW: previousLayouts[item.i]?.minW ?? MIN_WIDGET_W,
-            minH: previousLayouts[item.i]?.minH ?? MIN_WIDGET_H,
-        };
-        return accumulator;
-    }, {});
-};
+const DEFAULT_APIS = createDefaultApis(API_BASE_URL);
 
 const DashboardPage = () => {
     const navigate = useNavigate();
@@ -290,10 +118,14 @@ const DashboardPage = () => {
             try {
                 const res = await dashboardService.getApiData(null, "/health");
                 if (!cancelled && res?.version) setBackendVersion(res.version);
-            } catch { /* ignore */ }
+            } catch {
+                /* ignore */
+            }
         };
         fetchBackendVersion();
-        return () => { cancelled = true; };
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     useEffect(() => {
@@ -324,10 +156,12 @@ const DashboardPage = () => {
             .trim()
             .toLowerCase() === "admin";
 
-    const reportWidgetStatus = useAlarmStore((state) => state.reportWidgetStatus);
-    const alarmSound      = useAlarmStore((state) => state.alarmSound);
-    const setAlarmSound   = useAlarmStore((state) => state.setAlarmSound);
-    const soundEnabled    = useAlarmStore((state) => state.soundEnabled);
+    const reportWidgetStatus = useAlarmStore(
+        (state) => state.reportWidgetStatus,
+    );
+    const alarmSound = useAlarmStore((state) => state.alarmSound);
+    const setAlarmSound = useAlarmStore((state) => state.setAlarmSound);
+    const soundEnabled = useAlarmStore((state) => state.soundEnabled);
     const setSoundEnabled = useAlarmStore((state) => state.setSoundEnabled);
 
     const { results, loadingMap, refreshingMap, refetchAll, refetchOne } =
@@ -338,21 +172,33 @@ const DashboardPage = () => {
     useEffect(() => {
         dashboardWidgets.forEach((widget) => {
             // Skip widgets that manage their own alarm via onAlarmChange
-            if (widget.type === WIDGET_TYPE_SERVER_RESOURCE || widget.type === WIDGET_TYPE_NETWORK_TEST) return;
+            if (
+                widget.type === WIDGET_TYPE_SERVER_RESOURCE ||
+                widget.type === WIDGET_TYPE_NETWORK_TEST
+            )
+                return;
 
             const status = results[widget.id]?.status ?? "loading";
             // dead: 완전 실패 / slow-live: status-list에서 일부 NG → 둘 다 alarm 발생
-            let alarmStatus = (status === "dead" || status === "slow-live") ? "dead" : status;
+            let alarmStatus =
+                status === "dead" || status === "slow-live" ? "dead" : status;
 
             // Check criteria-based alerts for table widgets
-            if (alarmStatus !== "dead" && widget.type === "table" && widget.tableSettings?.criteria) {
+            if (
+                alarmStatus !== "dead" &&
+                widget.type === "table" &&
+                widget.tableSettings?.criteria
+            ) {
                 const criteriaMap = widget.tableSettings.criteria;
                 const enabledCols = getEnabledCriteriaColumns(criteriaMap);
                 if (enabledCols.length > 0) {
                     const data = results[widget.id]?.data;
                     if (data) {
                         const rows = normalizeToArray(data);
-                        const alertCount = countRowsMatchingCriteria(rows, criteriaMap);
+                        const alertCount = countRowsMatchingCriteria(
+                            rows,
+                            criteriaMap,
+                        );
                         if (alertCount > 0) {
                             alarmStatus = "dead";
                         }
@@ -389,8 +235,10 @@ const DashboardPage = () => {
 
         const isStatusListWidget = newApiForm.type === WIDGET_TYPE_STATUS_LIST;
         const isNetworkTestWidget = newApiForm.type === WIDGET_TYPE_NETWORK_TEST;
-        const isServerResourceWidget = newApiForm.type === WIDGET_TYPE_SERVER_RESOURCE;
-        const needsEndpoint = !isStatusListWidget && !isNetworkTestWidget && !isServerResourceWidget;
+        const isServerResourceWidget =
+            newApiForm.type === WIDGET_TYPE_SERVER_RESOURCE;
+        const needsEndpoint =
+            !isStatusListWidget && !isNetworkTestWidget && !isServerResourceWidget;
         if (needsEndpoint && !newApiForm.endpoint.trim()) {
             return;
         }
@@ -411,8 +259,8 @@ const DashboardPage = () => {
             y: dashboardWidgets.length * 4,
         };
         const isChartType =
-            newApiForm.type === WIDGET_TYPE_LINE_CHART ||
-            newApiForm.type === WIDGET_TYPE_BAR_CHART;
+            newApiForm.type === "line-chart" ||
+            newApiForm.type === "bar-chart";
         const newWidget = {
             id: widgetId,
             type: newApiForm.type,
@@ -441,9 +289,7 @@ const DashboardPage = () => {
             serverConfig: isServerResourceWidget
                 ? { servers: [] }
                 : undefined,
-            networkConfig: isNetworkTestWidget
-                ? { targets: [] }
-                : undefined,
+            networkConfig: isNetworkTestWidget ? { targets: [] } : undefined,
         };
 
         addWidget(newWidget);
@@ -481,7 +327,6 @@ const DashboardPage = () => {
             updateWidget(apiId, { title: nextTitle });
             return;
         }
-
 
         const nextEndpoint = String(
             updates?.endpoint ?? targetWidget.endpoint ?? "",
@@ -674,444 +519,63 @@ const DashboardPage = () => {
         event.target.value = "";
     };
 
-    const getApiResult = (apiId) => results[apiId];
-
-    const getApiData = (apiId) => {
-        const apiResult = getApiResult(apiId);
-        if (!apiResult) return null;
-        return apiResult.data ?? null;
+    const handleApiBaseUrlDraftChange = (value) => {
+        setApiBaseUrlDraft(value);
+        setApiBaseUrlSaved(false);
     };
+
+    const contentZoom =
+        dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM;
+    const widgetFontSize =
+        dashboardSettings?.widgetFontSize ?? DEFAULT_WIDGET_FONT_SIZE;
 
     return (
         <div className='dashboard-page'>
-            <header className='dashboard-header'>
-                <div className='header-left'>
-                    <h1>📊 Monitoring Dashboard</h1>
-                    <div className='header-subtitle-row'>
-                        <p>Real-time Application Status &amp; Alerts</p>
-                        <span
-                            className='api-count'
-                            title={`위젯 ${dashboardWidgets.length}개`}
-                        >
-                            <span className='api-count-icon'>◫</span>
-                            <span className='api-count-value'>
-                                {dashboardWidgets.length}
-                            </span>
-                        </span>
-                    </div>
-                </div>
-
-                <div className='header-right'>
-                    <div className='header-info-row'>
-                        <span className='header-user-id'>
-                            @{user?.username || "administrator"}
-                        </span>
-                        <button
-                            className='logout-btn icon'
-                            onClick={handleLogout}
-                            title='로그아웃'
-                        >
-                            ⎋
-                        </button>
-                    </div>
-
-                    <div className='header-controls-row'>
-                        <button
-                            className='toolbar-btn toolbar-btn-secondary'
-                            onClick={() => setShowDashboardSettings(true)}
-                            title='대시보드 설정'
-                        >
-                            <svg className='toolbar-btn-icon' width='14' height='14' viewBox='0 0 14 14' fill='currentColor'>
-                                <rect x='0' y='0' width='6' height='6' rx='1.2' />
-                                <rect x='8' y='0' width='6' height='6' rx='1.2' />
-                                <rect x='0' y='8' width='6' height='6' rx='1.2' />
-                                <rect x='8' y='8' width='6' height='6' rx='1.2' />
-                            </svg>
-                        </button>
-                        {isAdmin && (
-                            <button
-                                className='toolbar-btn toolbar-btn-secondary toolbar-btn-backend'
-                                onClick={() => setShowConfigEditor(true)}
-                                title='백엔드 설정'
-                            >
-                                <span className='toolbar-btn-icon'>⚙</span>
-                            </button>
-                        )}
-                        <button
-                            className='toolbar-btn toolbar-btn-primary'
-                            onClick={() => setShowAddApi(true)}
-                            title='API 추가'
-                        >
-                            <span className='toolbar-btn-icon'>＋</span>
-                        </button>
-
-                        {isAdmin && (
-                            <button
-                                className='toolbar-btn toolbar-btn-secondary'
-                                onClick={() => setShowSqlEditor(true)}
-                                title='API SQL 편집'
-                            >
-                                <span className='toolbar-btn-icon'>⌘</span>
-                            </button>
-                        )}
-
-                        <button
-                            className='toolbar-btn toolbar-btn-secondary'
-                            onClick={() => refetchAll()}
-                            title='전체 새로고침'
-                        >
-                            <span className='toolbar-btn-icon'>⟳</span>
-                        </button>
-
-                        <button
-                            className='toolbar-btn toolbar-btn-secondary'
-                            onClick={() => navigate("/logs")}
-                            title='서버 로그 조회'
-                        >
-                            <span className='toolbar-btn-icon'>📋</span>
-                        </button>
-                    </div>
-                </div>
-            </header>
+            <DashboardHeader
+                widgetCount={dashboardWidgets.length}
+                user={user}
+                isAdmin={isAdmin}
+                onOpenSettings={() => setShowDashboardSettings(true)}
+                onOpenConfigEditor={() => setShowConfigEditor(true)}
+                onOpenAddApi={() => setShowAddApi(true)}
+                onOpenSqlEditor={() => setShowSqlEditor(true)}
+                onRefreshAll={() => refetchAll()}
+                onOpenLogs={() => navigate("/logs")}
+                onLogout={handleLogout}
+            />
 
             {showAddApi && (
-                <div
-                    className='modal-overlay'
-                >
-                    <div
-                        className='modal-content'
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        <div className='modal-header'>
-                            <h3>API 엔드포인트 추가</h3>
-                            <button
-                                className='close-btn'
-                                onClick={() => setShowAddApi(false)}
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className='modal-body'>
-                            <div className='form-group'>
-                                <label htmlFor='api-title'>제목</label>
-                                <input
-                                    id='api-title'
-                                    type='text'
-                                    placeholder='예: CoinTrader Status'
-                                    value={newApiForm.title}
-                                    onChange={(event) =>
-                                        setNewApiForm({
-                                            ...newApiForm,
-                                            title: event.target.value,
-                                        })
-                                    }
-                                />
-                            </div>
-
-                            {newApiForm.type === WIDGET_TYPE_STATUS_LIST ? (
-                                <div className='form-group'>
-                                    <label htmlFor='api-endpoints-text'>
-                                        엔드포인트 목록
-                                    </label>
-                                    <textarea
-                                        id='api-endpoints-text'
-                                        className='config-json-textarea'
-                                        placeholder={
-                                            "한 줄에 하나씩 입력하세요.\nlabel | https://example.com/health"
-                                        }
-                                        value={newApiForm.endpointsText}
-                                        onChange={(event) =>
-                                            setNewApiForm({
-                                                ...newApiForm,
-                                                endpointsText:
-                                                    event.target.value,
-                                            })
-                                        }
-                                    />
-                                </div>
-                            ) : newApiForm.type === WIDGET_TYPE_NETWORK_TEST || newApiForm.type === WIDGET_TYPE_SERVER_RESOURCE ? (
-                                <div className='form-group'>
-                                    <label htmlFor='api-endpoint'>
-                                        엔드포인트 URL
-                                    </label>
-                                    <input
-                                        id='api-endpoint'
-                                        type='text'
-                                        value={newApiForm.type === WIDGET_TYPE_NETWORK_TEST ? '/dashboard/network-test' : '/dashboard/server-resources'}
-                                        disabled
-                                        className='input-disabled'
-                                    />
-                                    <span className='form-hint'>백엔드 고정 엔드포인트 (자동 설정)</span>
-                                </div>
-                            ) : (
-                                <div className='form-group'>
-                                    <label htmlFor='api-endpoint'>
-                                        엔드포인트 URL
-                                    </label>
-                                    <input
-                                        id='api-endpoint'
-                                        type='text'
-                                        placeholder='예: http://localhost:5000/api/status'
-                                        value={newApiForm.endpoint}
-                                        onChange={(event) =>
-                                            setNewApiForm({
-                                                ...newApiForm,
-                                                endpoint: event.target.value,
-                                            })
-                                        }
-                                    />
-                                </div>
-                            )}
-
-                            <div className='form-group'>
-                                <label htmlFor='api-widget-type'>
-                                    위젯 타입
-                                </label>
-                                <select
-                                    id='api-widget-type'
-                                    value={newApiForm.type}
-                                    onChange={(event) =>
-                                        setNewApiForm({
-                                            ...newApiForm,
-                                            type: event.target.value,
-                                        })
-                                    }
-                                >
-                                    <option value={WIDGET_TYPE_TABLE}>
-                                        데이터 테이블
-                                    </option>
-                                    <option value={WIDGET_TYPE_HEALTH_CHECK}>
-                                        웹서버 상태 체크 (HTTP 200)
-                                    </option>
-                                    <option value={WIDGET_TYPE_LINE_CHART}>
-                                        시간대별 추이 (라인차트)
-                                    </option>
-                                    <option value={WIDGET_TYPE_BAR_CHART}>
-                                        기준별 수량 (바차트)
-                                    </option>
-                                    <option value={WIDGET_TYPE_STATUS_LIST}>
-                                        API 상태 리스트 (다중 200 체크)
-                                    </option>
-                                    <option value={WIDGET_TYPE_NETWORK_TEST}>
-                                        네트워크 테스트 (Ping/Telnet)
-                                    </option>
-                                    <option value={WIDGET_TYPE_SERVER_RESOURCE}>
-                                        서버 리소스 모니터링 (CPU/Memory/Disk)
-                                    </option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div className='modal-footer'>
-                            <button
-                                className='secondary-btn'
-                                onClick={() => setShowAddApi(false)}
-                            >
-                                취소
-                            </button>
-                            <button
-                                className='primary-btn'
-                                onClick={handleAddApi}
-                            >
-                                추가
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <AddApiModal
+                    form={newApiForm}
+                    onChange={setNewApiForm}
+                    onSubmit={handleAddApi}
+                    onClose={() => setShowAddApi(false)}
+                />
             )}
 
             {showDashboardSettings && (
-                <div
-                    className='modal-overlay'
-                >
-                    <div
-                        className='modal-content dashboard-settings-modal'
-                        onClick={(event) => event.stopPropagation()}
-                    >
-                        <div className='modal-header'>
-                            <h3>대시보드 설정</h3>
-                            <button
-                                className='close-btn'
-                                onClick={() => setShowDashboardSettings(false)}
-                            >
-                                ✕
-                            </button>
-                        </div>
-
-                        <div className='modal-body'>
-                            {/* ── Row 1: API URL + Font size ─────────────────── */}
-                            <div className='settings-row-2col'>
-                                <div className='form-group'>
-                                    <label htmlFor='api-base-url'>API 서버 URL</label>
-                                    <div className='inline-input-group'>
-                                        <input
-                                            id='api-base-url'
-                                            type='text'
-                                            value={apiBaseUrlDraft}
-                                            onChange={(e) => {
-                                                setApiBaseUrlDraft(e.target.value);
-                                                setApiBaseUrlSaved(false);
-                                            }}
-                                            placeholder='http://127.0.0.1:5000'
-                                            style={{ flex: 1 }}
-                                        />
-                                        <button
-                                            className='secondary-btn'
-                                            onClick={handleApplyApiBaseUrl}
-                                            title='적용 시 페이지 새로고침'
-                                        >
-                                            {apiBaseUrlSaved ? "✓" : "적용"}
-                                        </button>
-                                    </div>
-                                </div>
-
-                                <div className='form-group'>
-                                    <label htmlFor='widget-font-size'>폰트 크기 (px)</label>
-                                    <div className='inline-input-group'>
-                                        <input
-                                            id='widget-font-size'
-                                            type='number'
-                                            min='10'
-                                            max='18'
-                                            value={fontSizeDraft}
-                                            onChange={(event) =>
-                                                setFontSizeDraft(event.target.value)
-                                            }
-                                            style={{ width: '64px' }}
-                                        />
-                                        <button
-                                            className='secondary-btn'
-                                            onClick={handleApplyDashboardSettings}
-                                        >
-                                            적용
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* ── Row 2: Zoom ────────────────────────────────── */}
-                            <div className='form-group'>
-                                <label>위젯 영역 확대/축소 ({zoomDraft}%)</label>
-                                <div className='zoom-control-row'>
-                                    <button
-                                        className='toolbar-btn'
-                                        title='축소'
-                                        onClick={() =>
-                                            setZoomDraft((prev) =>
-                                                Math.max(MIN_CONTENT_ZOOM, Number(prev) - ZOOM_STEP),
-                                            )
-                                        }
-                                    >−</button>
-                                    <input
-                                        id='content-zoom'
-                                        type='range'
-                                        min={MIN_CONTENT_ZOOM}
-                                        max={MAX_CONTENT_ZOOM}
-                                        step={ZOOM_STEP}
-                                        value={zoomDraft}
-                                        onChange={(event) => setZoomDraft(Number(event.target.value))}
-                                        className='zoom-range-input'
-                                    />
-                                    <button
-                                        className='toolbar-btn'
-                                        title='확대'
-                                        onClick={() =>
-                                            setZoomDraft((prev) =>
-                                                Math.min(MAX_CONTENT_ZOOM, Number(prev) + ZOOM_STEP),
-                                            )
-                                        }
-                                    >+</button>
-                                    <button
-                                        className='secondary-btn'
-                                        onClick={handleApplyDashboardSettings}
-                                    >적용</button>
-                                    <button
-                                        className='toolbar-btn'
-                                        title='초기화'
-                                        onClick={() => setZoomDraft(DEFAULT_CONTENT_ZOOM)}
-                                    >↺</button>
-                                </div>
-                                {zoomDraft !== 100 && (
-                                    <span className='zoom-warning'>위젯 영역이 100%가 아닐 때 각 위젯의 버튼은 비활성화됩니다.</span>
-                                )}
-                            </div>
-
-                            {/* ── Row 3: Alarm sound buttons (all in one line) ─ */}
-                            <div className='form-group'>
-                                <label>알람 경고음</label>
-                                <div className='alarm-sound-row'>
-                                    {SOUND_TYPES.map((type) => (
-                                        <button
-                                            key={type}
-                                            className={`alarm-sound-btn${alarmSound === type && soundEnabled ? ' active' : ''}`}
-                                            onClick={() => {
-                                                setAlarmSound(type);
-                                                setSoundEnabled(true);
-                                            }}
-                                        >
-                                            {type === 'beep' ? '♩ Beep' : type === 'siren' ? '⚡ Siren' : '⊛ Pulse'}
-                                        </button>
-                                    ))}
-                                    <button
-                                        className={`alarm-sound-btn${!soundEnabled ? ' active muted' : ''}`}
-                                        onClick={() => setSoundEnabled(false)}
-                                    >
-                                        ⊘ Mute
-                                    </button>
-                                </div>
-                            </div>
-
-                            <div className='form-group'>
-                                <label htmlFor='config-file-upload'>
-                                    설정 JSON 파일 로드
-                                </label>
-                                <input
-                                    id='config-file-upload'
-                                    type='file'
-                                    accept='application/json,.json'
-                                    onChange={handleConfigFileChange}
-                                />
-                            </div>
-
-                            <div className='form-group'>
-                                <label htmlFor='config-json-text'>
-                                    설정 JSON 편집/붙여넣기
-                                </label>
-                                <textarea
-                                    id='config-json-text'
-                                    className='config-json-textarea'
-                                    value={configJsonDraft}
-                                    onChange={(event) =>
-                                        setConfigJsonDraft(event.target.value)
-                                    }
-                                    placeholder='설정 JSON을 붙여넣거나 파일 로드 후 편집하세요.'
-                                />
-                                {configErrorMessage && (
-                                    <p className='config-error-text'>
-                                        {configErrorMessage}
-                                    </p>
-                                )}
-                            </div>
-                        </div>
-
-                        <div className='modal-footer'>
-                            <button
-                                className='secondary-btn'
-                                onClick={handleExportConfig}
-                            >
-                                JSON 저장
-                            </button>
-                            <button
-                                className='primary-btn'
-                                onClick={handleImportConfigFromText}
-                                disabled={!configJsonDraft.trim()}
-                            >
-                                JSON 로드
-                            </button>
-                        </div>
-                    </div>
-                </div>
+                <DashboardSettingsModal
+                    onClose={() => setShowDashboardSettings(false)}
+                    apiBaseUrlDraft={apiBaseUrlDraft}
+                    apiBaseUrlSaved={apiBaseUrlSaved}
+                    onApiBaseUrlDraftChange={handleApiBaseUrlDraftChange}
+                    onApplyApiBaseUrl={handleApplyApiBaseUrl}
+                    fontSizeDraft={fontSizeDraft}
+                    onFontSizeDraftChange={setFontSizeDraft}
+                    zoomDraft={zoomDraft}
+                    onZoomDraftChange={setZoomDraft}
+                    onApplyDashboardSettings={handleApplyDashboardSettings}
+                    alarmSound={alarmSound}
+                    soundEnabled={soundEnabled}
+                    onSetAlarmSound={setAlarmSound}
+                    onSetSoundEnabled={setSoundEnabled}
+                    configJsonDraft={configJsonDraft}
+                    onConfigJsonDraftChange={setConfigJsonDraft}
+                    onConfigFileChange={handleConfigFileChange}
+                    configErrorMessage={configErrorMessage}
+                    onExportConfig={handleExportConfig}
+                    onImportConfigFromText={handleImportConfigFromText}
+                />
             )}
 
             {showSqlEditor && isAdmin && (
@@ -1130,11 +594,15 @@ const DashboardPage = () => {
 
             <div className='dashboard-content-wrapper'>
                 <div
-                    className={`dashboard-content${(dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM) !== 100 ? " zoom-scaled" : ""}`}
+                    className={`dashboard-content${contentZoom !== 100 ? " zoom-scaled" : ""}`}
                     style={(() => {
-                        const s = (dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM) / 100;
+                        const s = contentZoom / 100;
                         return s !== 1
-                            ? { transform: `scale(${s})`, transformOrigin: "top left", width: `${100 / s}%` }
+                            ? {
+                                  transform: `scale(${s})`,
+                                  transformOrigin: "top left",
+                                  width: `${100 / s}%`,
+                              }
                             : undefined;
                     })()}
                 >
@@ -1182,39 +650,19 @@ const DashboardPage = () => {
                             containerPadding={[0, 0]}
                             draggableHandle='.api-card-header'
                             resizeHandles={["se"]}
-                            transformScale={(dashboardSettings?.contentZoom ?? DEFAULT_CONTENT_ZOOM) / 100}
+                            transformScale={contentZoom / 100}
                             onDragStop={handleLayoutCommit}
                             onResizeStop={handleLayoutCommit}
                         >
                             {dashboardWidgets.map((widget) => {
-                                const widgetType =
-                                    widget.type === WIDGET_TYPE_HEALTH_CHECK
-                                        ? WIDGET_TYPE_HEALTH_CHECK
-                                        : widget.type === WIDGET_TYPE_STATUS_LIST
-                                          ? WIDGET_TYPE_STATUS_LIST
-                                          : widget.type === WIDGET_TYPE_LINE_CHART
-                                            ? WIDGET_TYPE_LINE_CHART
-                                            : widget.type === WIDGET_TYPE_BAR_CHART
-                                              ? WIDGET_TYPE_BAR_CHART
-                                              : widget.type === WIDGET_TYPE_NETWORK_TEST
-                                                ? WIDGET_TYPE_NETWORK_TEST
-                                                : widget.type === WIDGET_TYPE_SERVER_RESOURCE
-                                                  ? WIDGET_TYPE_SERVER_RESOURCE
-                                                  : WIDGET_TYPE_TABLE;
-                                const apiData = getApiData(widget.id);
-                                const apiResult = getApiResult(widget.id);
+                                const apiResult = results[widget.id];
+                                const apiData = apiResult?.data ?? null;
                                 const apiError = apiResult?.error;
-                                const apiStatus =
-                                    apiResult?.status ?? "loading";
-
-                                const widgetError =
-                                    apiStatus === "dead" ||
-                                    apiStatus === "error"
-                                        ? apiError
-                                        : null;
+                                const apiStatus = apiResult?.status ?? "loading";
                                 const isLoading =
                                     !!loadingMap[widget.id] && !apiData;
-                                const isRefreshing = !!refreshingMap[widget.id];
+                                const isRefreshing =
+                                    !!refreshingMap[widget.id];
                                 const currentLayout =
                                     layouts[widget.id] ??
                                     gridLayout.find(
@@ -1223,445 +671,41 @@ const DashboardPage = () => {
 
                                 return (
                                     <div key={widget.id} className='grid-item'>
-                                        {widgetType ===
-                                        WIDGET_TYPE_LINE_CHART ? (
-                                            <LineChartCard
-                                                apiId={widget.id}
-                                                title={widget.title}
-                                                endpoint={widget.endpoint}
-                                                data={apiData}
-                                                loading={isLoading}
-                                                error={widgetError}
-                                                apiStatus={apiStatus}
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                onRefresh={() =>
-                                                    handleManualRefresh(widget)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    DEFAULT_REFRESH_INTERVAL_SEC
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                                onSizeChange={(
-                                                    nextWidth,
-                                                    nextHeight,
-                                                ) =>
-                                                    handleWidgetSizeChange(
-                                                        widget.id,
-                                                        nextWidth,
-                                                        nextHeight,
-                                                    )
-                                                }
-                                                chartSettings={
-                                                    widget.chartSettings
-                                                }
-                                                onChartSettingsChange={(
-                                                    nextSettings,
-                                                ) =>
-                                                    handleChartSettingsChange(
-                                                        widget.id,
-                                                        nextSettings,
-                                                    )
-                                                }
-                                            />
-                                        ) : widgetType ===
-                                          WIDGET_TYPE_BAR_CHART ? (
-                                            <BarChartCard
-                                                apiId={widget.id}
-                                                title={widget.title}
-                                                endpoint={widget.endpoint}
-                                                data={apiData}
-                                                loading={isLoading}
-                                                error={widgetError}
-                                                apiStatus={apiStatus}
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                onRefresh={() =>
-                                                    handleManualRefresh(widget)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    DEFAULT_REFRESH_INTERVAL_SEC
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                                onSizeChange={(
-                                                    nextWidth,
-                                                    nextHeight,
-                                                ) =>
-                                                    handleWidgetSizeChange(
-                                                        widget.id,
-                                                        nextWidth,
-                                                        nextHeight,
-                                                    )
-                                                }
-                                                chartSettings={
-                                                    widget.chartSettings
-                                                }
-                                                onChartSettingsChange={(
-                                                    nextSettings,
-                                                ) =>
-                                                    handleChartSettingsChange(
-                                                        widget.id,
-                                                        nextSettings,
-                                                    )
-                                                }
-                                            />
-                                        ) : widgetType ===
-                                          WIDGET_TYPE_STATUS_LIST ? (
-                                            <StatusListCard
-                                                title={widget.title}
-                                                endpoints={widget.endpoints}
-                                                data={apiData}
-                                                loading={isLoading}
-                                                error={widgetError}
-                                                apiStatus={apiStatus}
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                onRefresh={() =>
-                                                    handleManualRefresh(widget)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    DEFAULT_REFRESH_INTERVAL_SEC
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                                onEndpointsChange={(
-                                                    nextEndpoints,
-                                                ) =>
-                                                    handleStatusListEndpointsChange(
-                                                        widget.id,
-                                                        nextEndpoints,
-                                                    )
-                                                }
-                                                onSizeChange={(
-                                                    nextWidth,
-                                                    nextHeight,
-                                                ) =>
-                                                    handleWidgetSizeChange(
-                                                        widget.id,
-                                                        nextWidth,
-                                                        nextHeight,
-                                                    )
-                                                }
-                                            />
-                                        ) : widgetType ===
-                                          WIDGET_TYPE_SERVER_RESOURCE ? (
-                                            <ServerResourceCard
-                                                title={widget.title}
-                                                widgetConfig={widget.serverConfig}
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                onRefresh={() =>
-                                                    refetchOne(widget.id)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    30
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                                onWidgetConfigChange={(cfg) =>
-                                                    updateWidget(widget.id, {
-                                                        serverConfig: cfg,
-                                                    })
-                                                }
-                                                onAlarmChange={(status) =>
-                                                    reportWidgetStatus(
-                                                        widget.id,
-                                                        status,
-                                                    )
-                                                }
-                                                onSizeChange={(
-                                                    nextWidth,
-                                                    nextHeight,
-                                                ) =>
-                                                    handleWidgetSizeChange(
-                                                        widget.id,
-                                                        nextWidth,
-                                                        nextHeight,
-                                                    )
-                                                }
-                                            />
-                                        ) : widgetType ===
-                                          WIDGET_TYPE_NETWORK_TEST ? (
-                                            <NetworkTestCard
-                                                title={widget.title}
-                                                networkConfig={
-                                                    widget.networkConfig
-                                                }
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    10
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                                onWidgetConfigChange={(cfg) =>
-                                                    updateWidget(widget.id, {
-                                                        networkConfig: cfg,
-                                                    })
-                                                }
-                                                onAlarmChange={(status) =>
-                                                    reportWidgetStatus(
-                                                        widget.id,
-                                                        status,
-                                                    )
-                                                }
-                                                onSizeChange={(
-                                                    nextWidth,
-                                                    nextHeight,
-                                                ) =>
-                                                    handleWidgetSizeChange(
-                                                        widget.id,
-                                                        nextWidth,
-                                                        nextHeight,
-                                                    )
-                                                }
-                                            />
-                                        ) : widgetType ===
-                                          WIDGET_TYPE_HEALTH_CHECK ? (
-                                            <HealthCheckCard
-                                                apiId={widget.id}
-                                                title={widget.title}
-                                                endpoint={widget.endpoint}
-                                                healthData={apiData}
-                                                loading={isLoading}
-                                                refreshing={isRefreshing}
-                                                error={widgetError}
-                                                apiStatus={apiStatus}
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                onRefresh={() =>
-                                                    handleManualRefresh(widget)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    DEFAULT_REFRESH_INTERVAL_SEC
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                            />
-                                        ) : (
-                                            <ApiCard
-                                                apiId={widget.id}
-                                                title={widget.title}
-                                                endpoint={widget.endpoint}
-                                                data={apiData}
-                                                loading={isLoading}
-                                                refreshing={isRefreshing}
-                                                error={widgetError}
-                                                apiStatus={apiStatus}
-                                                onRemove={() =>
-                                                    handleRemoveApi(widget.id)
-                                                }
-                                                onRefresh={() =>
-                                                    handleManualRefresh(widget)
-                                                }
-                                                currentSize={currentLayout}
-                                                sizeBounds={{
-                                                    minW:
-                                                        currentLayout?.minW ??
-                                                        MIN_WIDGET_W,
-                                                    maxW: MAX_WIDGET_W,
-                                                    minH:
-                                                        currentLayout?.minH ??
-                                                        MIN_WIDGET_H,
-                                                    maxH: MAX_WIDGET_H,
-                                                }}
-                                                refreshIntervalSec={
-                                                    widget.refreshIntervalSec ??
-                                                    DEFAULT_REFRESH_INTERVAL_SEC
-                                                }
-                                                onRefreshIntervalChange={(
-                                                    intervalSec,
-                                                ) =>
-                                                    handleRefreshIntervalChange(
-                                                        widget.id,
-                                                        intervalSec,
-                                                    )
-                                                }
-                                                onWidgetMetaChange={(updates) =>
-                                                    handleWidgetMetaChange(
-                                                        widget.id,
-                                                        updates,
-                                                    )
-                                                }
-                                                tableSettings={
-                                                    widget.tableSettings
-                                                }
-                                                widgetFontSize={
-                                                    dashboardSettings?.widgetFontSize ??
-                                                    DEFAULT_WIDGET_FONT_SIZE
-                                                }
-                                                onTableSettingsChange={(
-                                                    nextSettings,
-                                                ) =>
-                                                    handleTableSettingsChange(
-                                                        widget.id,
-                                                        nextSettings,
-                                                    )
-                                                }
-                                                onSizeChange={(
-                                                    nextWidth,
-                                                    nextHeight,
-                                                ) =>
-                                                    handleWidgetSizeChange(
-                                                        widget.id,
-                                                        nextWidth,
-                                                        nextHeight,
-                                                    )
-                                                }
-                                            />
-                                        )}
+                                        <WidgetRenderer
+                                            widget={widget}
+                                            currentLayout={currentLayout}
+                                            apiData={apiData}
+                                            apiError={apiError}
+                                            apiStatus={apiStatus}
+                                            isLoading={isLoading}
+                                            isRefreshing={isRefreshing}
+                                            widgetFontSize={widgetFontSize}
+                                            onRemoveApi={handleRemoveApi}
+                                            onManualRefresh={handleManualRefresh}
+                                            onRefetchOne={refetchOne}
+                                            onWidgetSizeChange={
+                                                handleWidgetSizeChange
+                                            }
+                                            onRefreshIntervalChange={
+                                                handleRefreshIntervalChange
+                                            }
+                                            onWidgetMetaChange={
+                                                handleWidgetMetaChange
+                                            }
+                                            onTableSettingsChange={
+                                                handleTableSettingsChange
+                                            }
+                                            onChartSettingsChange={
+                                                handleChartSettingsChange
+                                            }
+                                            onStatusListEndpointsChange={
+                                                handleStatusListEndpointsChange
+                                            }
+                                            onUpdateWidget={updateWidget}
+                                            onReportWidgetStatus={
+                                                reportWidgetStatus
+                                            }
+                                        />
                                     </div>
                                 );
                             })}

@@ -1,75 +1,27 @@
-import React, { useEffect, useMemo, useState, useRef, useCallback } from "react";
-import { createPortal } from "react-dom";
+import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import {
     countRowsMatchingCriteria,
     getEnabledCriteriaColumns,
 } from "../utils/helpers";
 import DynamicTable from "./DynamicTable";
+import {
+    clamp,
+    formatInterval,
+    formatLocalTime,
+    getAllColumns,
+    getDefaultColumnWidth,
+    normalizeData,
+    reorderItems,
+} from "./apiCardHelpers";
+import ApiCardRowDetailModal from "./ApiCardRowDetailModal";
+import ApiCardSettingsModal from "./ApiCardSettingsModal";
 import "./ApiCard.css";
 
-const reorderItems = (items, fromIndex, toIndex) => {
-    if (
-        fromIndex < 0 ||
-        toIndex < 0 ||
-        fromIndex >= items.length ||
-        toIndex >= items.length
-    ) {
-        return items;
-    }
-
-    const nextItems = [...items];
-    const [movedItem] = nextItems.splice(fromIndex, 1);
-    nextItems.splice(toIndex, 0, movedItem);
-    return nextItems;
-};
-
-const clamp = (value, min, max, fallback) => {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue)) {
-        return fallback;
-    }
-    return Math.min(max, Math.max(min, Math.floor(numericValue)));
-};
-
-const normalizeData = (rawData) => {
-    if (Array.isArray(rawData)) {
-        return rawData;
-    }
-
-    if (typeof rawData === "object" && rawData !== null) {
-        return Object.keys(rawData).map((key) => ({
-            _key: key,
-            ...rawData[key],
-        }));
-    }
-
-    return [];
-};
-
-const getAllColumns = (rawData) => {
-    const rows = normalizeData(rawData);
-    const columnSet = new Set();
-
-    rows.forEach((row) => {
-        if (typeof row === "object" && row !== null) {
-            Object.keys(row).forEach((key) => {
-                if (!key.startsWith("_")) {
-                    columnSet.add(key);
-                }
-            });
-        }
-    });
-
-    return Array.from(columnSet);
-};
-
 const ApiCard = ({
-    apiId,
     title,
     endpoint,
     data,
     loading,
-    refreshing,
     error,
     apiStatus,
     onRemove,
@@ -179,17 +131,6 @@ const ApiCard = ({
     useEffect(() => {
         setEndpointDraft(endpoint);
     }, [endpoint]);
-
-    const formatInterval = (sec) => {
-        if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
-        if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
-        return `every ${sec}s`;
-    };
-
-    const formatLocalTime = (date) => {
-        if (!date) return null;
-        return date.toLocaleTimeString("en-GB", { hour12: false });
-    };
 
     const columnWidths = tableSettings?.columnWidths ?? {};
     const [localColumnWidths, setLocalColumnWidths] = useState(columnWidths);
@@ -322,14 +263,6 @@ const ApiCard = ({
             columnWidthTimerRef.current = null;
         }, 300);
     }, [columnWidths, onTableSettingsChange]);
-
-    const getDefaultColumnWidth = (column) => {
-        const label = column
-            .replace(/_/g, " ")
-            .replace(/\b\w/g, (value) => value.toUpperCase());
-        const estimatedWidth = label.length * 9 + 28;
-        return Math.max(80, Math.min(420, estimatedWidth));
-    };
 
     useEffect(() => {
         if (availableColumns.length === 0) {
@@ -472,368 +405,6 @@ const ApiCard = ({
         return idx >= 0 ? dataRows[idx] : selectedRow;
     }, [selectedRow, dataRows]);
 
-    const renderDetailValue = (value) => {
-        if (value === null || value === undefined)
-            return <span className='detail-null'>—</span>;
-        if (typeof value === "boolean")
-            return (
-                <span
-                    className={value ? "detail-bool-true" : "detail-bool-false"}
-                >
-                    {value ? "true" : "false"}
-                </span>
-            );
-        if (typeof value === "object")
-            return (
-                <pre className='detail-json'>
-                    {JSON.stringify(value, null, 2)}
-                </pre>
-            );
-        if (typeof value === "number")
-            return (
-                <span className='detail-number'>{value.toLocaleString()}</span>
-            );
-        return <span className='detail-string'>{String(value)}</span>;
-    };
-
-    const rowDetailPopup = liveSelectedRow
-        ? createPortal(
-              <div
-                  className='row-detail-overlay'
-                  onClick={() => setSelectedRow(null)}
-              >
-                  <div
-                      className='row-detail-popup'
-                      onClick={(e) => e.stopPropagation()}
-                  >
-                      <div className='row-detail-header'>
-                          <div>
-                              <h5>Row Detail</h5>
-                              <p>{title}</p>
-                          </div>
-                          <button
-                              type='button'
-                              className='close-settings-btn'
-                              onClick={() => setSelectedRow(null)}
-                          >
-                              ✕
-                          </button>
-                      </div>
-                      <div className='row-detail-body'>
-                          <table className='row-detail-table'>
-                              <tbody>
-                                  {Object.entries(liveSelectedRow)
-                                      .filter(([k]) => !k.startsWith("_"))
-                                      .map(([key, value]) => (
-                                          <tr
-                                              key={key}
-                                              className='row-detail-row'
-                                          >
-                                              <td className='row-detail-key'>
-                                                  {key}
-                                              </td>
-                                              <td className='row-detail-val'>
-                                                  {renderDetailValue(value)}
-                                              </td>
-                                          </tr>
-                                      ))}
-                              </tbody>
-                          </table>
-                      </div>
-                      <div className='row-detail-footer'>
-                          <span className='row-detail-live-indicator'>
-                              <span className='live-dot' />
-                              실시간 반영 중
-                          </span>
-                      </div>
-                  </div>
-              </div>,
-              document.body,
-          )
-        : null;
-
-    const settingsPopup = showSettings ? (
-        <div
-            className='settings-overlay'
-        >
-            <div
-                className='settings-popup'
-                onClick={(event) => event.stopPropagation()}
-            >
-                <div className='settings-popup-header'>
-                    <div>
-                        <h5>위젯 설정</h5>
-                        <p>{title}</p>
-                    </div>
-                    <button
-                        type='button'
-                        className='close-settings-btn'
-                        onClick={() => setShowSettings(false)}
-                    >
-                        ✕
-                    </button>
-                </div>
-
-                <div className='settings-popup-body'>
-                    <div className='settings-section'>
-                        <h6>위젯 정보</h6>
-                        <div className='size-editor widget-meta-editor'>
-                            <label>
-                                Title
-                                <input
-                                    type='text'
-                                    value={titleDraft}
-                                    onChange={(event) =>
-                                        setTitleDraft(event.target.value)
-                                    }
-                                />
-                            </label>
-                            <label>
-                                Endpoint
-                                <input
-                                    type='text'
-                                    value={endpointDraft}
-                                    onChange={(event) =>
-                                        setEndpointDraft(event.target.value)
-                                    }
-                                />
-                            </label>
-                            <button
-                                type='button'
-                                className='size-preset-btn'
-                                onClick={handleWidgetMetaApply}
-                            >
-                                적용
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className='settings-inline-row'>
-                        <div className='settings-section'>
-                            <h6>위젯 크기</h6>
-                            <div className='size-editor widget-size-editor'>
-                                <label>
-                                    Width
-                                    <input
-                                        type='number'
-                                        min={sizeBounds?.minW ?? 2}
-                                        max={sizeBounds?.maxW ?? 12}
-                                        value={sizeDraft.w}
-                                        onChange={(event) =>
-                                            setSizeDraft((previousDraft) => ({
-                                                ...previousDraft,
-                                                w: event.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <label>
-                                    Height
-                                    <input
-                                        type='number'
-                                        min={sizeBounds?.minH ?? 2}
-                                        max={sizeBounds?.maxH ?? 24}
-                                        value={sizeDraft.h}
-                                        onChange={(event) =>
-                                            setSizeDraft((previousDraft) => ({
-                                                ...previousDraft,
-                                                h: event.target.value,
-                                            }))
-                                        }
-                                    />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={handleSizeApply}
-                                >
-                                    적용
-                                </button>
-                            </div>
-                        </div>
-
-                        <div className='settings-section refresh-interval-section'>
-                            <h6>API 리프레시 주기 (초)</h6>
-                            <div className='refresh-interval-editor'>
-                                <label className='refresh-interval-input-label'>
-                                    <span>Interval</span>
-                                    <input
-                                        type='number'
-                                        min='1'
-                                        max='3600'
-                                        value={intervalDraft}
-                                        onChange={(event) =>
-                                            setIntervalDraft(event.target.value)
-                                        }
-                                    />
-                                </label>
-                                <button
-                                    type='button'
-                                    className='size-preset-btn'
-                                    onClick={handleIntervalApply}
-                                >
-                                    적용
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div className='settings-section'>
-                        <h6>컬럼 표시 및 너비</h6>
-                        <div className='column-settings-list'>
-                            {orderedColumns.map((column) => (
-                                <div
-                                    key={column}
-                                    className={`column-setting-row ${draggingColumn === column ? "dragging" : ""} ${dragOverColumn === column ? "drag-over" : ""}`}
-                                    onDragOver={(event) =>
-                                        handleColumnDragOver(event, column)
-                                    }
-                                    onDrop={(event) =>
-                                        handleColumnDropEvent(event, column)
-                                    }
-                                >
-                                    <button
-                                        type='button'
-                                        className='column-drag-handle'
-                                        aria-label={`${column} 순서 이동`}
-                                        title='드래그해서 표시 순서 변경'
-                                        draggable
-                                        onDragStart={(event) =>
-                                            handleColumnDragStart(event, column)
-                                        }
-                                        onDragEnd={handleColumnDragEnd}
-                                    >
-                                        ⋮⋮
-                                    </button>
-                                    <label className='column-toggle'>
-                                        <input
-                                            type='checkbox'
-                                            checked={visibleColumns.includes(
-                                                column,
-                                            )}
-                                            onChange={() =>
-                                                handleColumnToggle(column)
-                                            }
-                                        />
-                                        <span>{column}</span>
-                                    </label>
-
-                                    <div className='column-width-controls'>
-                                        <input
-                                            type='range'
-                                            min='80'
-                                            max='420'
-                                            step='10'
-                                            value={
-                                                localColumnWidths[column] ??
-                                                getDefaultColumnWidth(column)
-                                            }
-                                            onChange={(event) =>
-                                                handleColumnWidthChange(
-                                                    column,
-                                                    event.target.value,
-                                                )
-                                            }
-                                        />
-                                        <input
-                                            type='number'
-                                            min='80'
-                                            max='420'
-                                            step='10'
-                                            value={
-                                                localColumnWidths[column] ??
-                                                getDefaultColumnWidth(column)
-                                            }
-                                            onChange={(event) =>
-                                                handleColumnWidthChange(
-                                                    column,
-                                                    event.target.value,
-                                                )
-                                            }
-                                        />
-                                        <span>px</span>
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    <div className='settings-section'>
-                        <h6>이상 감지 Criteria (컬럼별)</h6>
-                        <div className='criteria-settings-list'>
-                            {availableColumns.map((column) => {
-                                const criteria = criteriaMap[column] ?? {
-                                    enabled: false,
-                                    operator: ">=",
-                                    value: "",
-                                };
-
-                                return (
-                                    <div
-                                        key={`${column}-criteria`}
-                                        className='criteria-setting-row'
-                                    >
-                                        <label className='criteria-column-label'>
-                                            <input
-                                                type='checkbox'
-                                                checked={!!criteria.enabled}
-                                                onChange={(event) =>
-                                                    handleCriteriaChange(
-                                                        column,
-                                                        {
-                                                            enabled:
-                                                                event.target
-                                                                    .checked,
-                                                        },
-                                                    )
-                                                }
-                                            />
-                                            <span>{column}</span>
-                                        </label>
-
-                                        <select
-                                            value={criteria.operator ?? ">="}
-                                            onChange={(event) =>
-                                                handleCriteriaChange(column, {
-                                                    operator:
-                                                        event.target.value,
-                                                })
-                                            }
-                                        >
-                                            <option value='>'>&gt;</option>
-                                            <option value='>='>&gt;=</option>
-                                            <option value='<'>&lt;</option>
-                                            <option value='<='>&lt;=</option>
-                                            <option value='=='>==</option>
-                                            <option value='!='>!=</option>
-                                            <option value='contains'>
-                                                contains
-                                            </option>
-                                            <option value='not_contains'>
-                                                not_contains
-                                            </option>
-                                        </select>
-
-                                        <input
-                                            type='text'
-                                            value={criteria.value ?? ""}
-                                            onChange={(event) =>
-                                                handleCriteriaChange(column, {
-                                                    value: event.target.value,
-                                                })
-                                            }
-                                            placeholder='임계값'
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    ) : null;
-
     return (
         <div className='api-card'>
             <div className='api-card-header'>
@@ -918,8 +489,43 @@ const ApiCard = ({
                 </div>
             </div>
 
-            {settingsPopup && createPortal(settingsPopup, document.body)}
-            {rowDetailPopup}
+            {showSettings && (
+                <ApiCardSettingsModal
+                    title={title}
+                    onClose={() => setShowSettings(false)}
+                    titleDraft={titleDraft}
+                    endpointDraft={endpointDraft}
+                    onTitleDraftChange={setTitleDraft}
+                    onEndpointDraftChange={setEndpointDraft}
+                    onWidgetMetaApply={handleWidgetMetaApply}
+                    sizeDraft={sizeDraft}
+                    sizeBounds={sizeBounds}
+                    onSizeDraftChange={setSizeDraft}
+                    onSizeApply={handleSizeApply}
+                    intervalDraft={intervalDraft}
+                    onIntervalDraftChange={setIntervalDraft}
+                    onIntervalApply={handleIntervalApply}
+                    orderedColumns={orderedColumns}
+                    visibleColumns={visibleColumns}
+                    localColumnWidths={localColumnWidths}
+                    draggingColumn={draggingColumn}
+                    dragOverColumn={dragOverColumn}
+                    onColumnToggle={handleColumnToggle}
+                    onColumnWidthChange={handleColumnWidthChange}
+                    onColumnDragStart={handleColumnDragStart}
+                    onColumnDragEnd={handleColumnDragEnd}
+                    onColumnDragOver={handleColumnDragOver}
+                    onColumnDropEvent={handleColumnDropEvent}
+                    availableColumns={availableColumns}
+                    criteriaMap={criteriaMap}
+                    onCriteriaChange={handleCriteriaChange}
+                />
+            )}
+            <ApiCardRowDetailModal
+                row={liveSelectedRow}
+                title={title}
+                onClose={() => setSelectedRow(null)}
+            />
 
             <div className='api-card-content'>
                 <DynamicTable
