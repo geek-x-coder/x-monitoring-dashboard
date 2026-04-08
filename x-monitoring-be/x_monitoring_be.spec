@@ -23,6 +23,7 @@ a = Analysis(
         'app.config',
         'app.db',
         'app.db_health_service',
+        'app.endpoint_cache_manager',
         'app.exceptions',
         'app.jdbc_executor',
         'app.log_reader',

@@ -1,23 +1,23 @@
-"""MonitoringBackend: orchestrates DB queries, caching, and endpoint management.
+"""MonitoringBackend: thin façade over the focused sub-services.
 
-This class is a façade — most non-cache work is delegated to focused
-sub-services in sibling modules:
-    - `LogReader`         → app/log_reader.py
-    - `DbHealthService`   → app/db_health_service.py
-    - `JdbcQueryExecutor` → app/jdbc_executor.py
-    - `SqlEditorService`  → app/sql_editor_service.py
-The façade preserves the public method names so route handlers do not
-need to know which sub-service does the work.
+All non-trivial work is delegated to sibling modules — this class only
+owns the executor + connection pool lifecycle and wires the sub-services
+together via constructor injection. Route handlers continue to call the
+same public methods on `MonitoringBackend`, so they don't need to know
+which sub-service does the work:
+
+    - `EndpointCacheManager` → app/endpoint_cache_manager.py
+    - `JdbcQueryExecutor`    → app/jdbc_executor.py
+    - `SqlEditorService`     → app/sql_editor_service.py
+    - `DbHealthService`      → app/db_health_service.py
+    - `LogReader`            → app/log_reader.py
 """
 from __future__ import annotations
 
 import logging
 import os
 import sys
-import threading
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
-from time import perf_counter
 from typing import Any
 from urllib.parse import urlparse
 
@@ -25,7 +25,7 @@ from .cache import EndpointCacheEntry
 from .config import ApiEndpointConfig, AppConfig, load_app_config
 from .db import DBConnectionPool, ensure_jvm_started
 from .db_health_service import DbHealthService
-from .exceptions import CachedEndpointError, QueryExecutionTimeoutError
+from .endpoint_cache_manager import EndpointCacheManager
 from .jdbc_executor import JdbcQueryExecutor
 from .log_reader import LogReader
 from .logging_setup import _startup_log, configure_logging
@@ -68,12 +68,6 @@ class MonitoringBackend:
             max_workers=self.config.thread_pool_size,
             thread_name_prefix="jdbc-worker",
         )
-        # 과거 QueryCache 인스턴스가 있었으나 어디서도 .set()이 호출되지 않는
-        # 데드 코드였음 → 제거. 실제 캐싱은 endpoint_cache(EndpointCacheEntry)로만 이뤄진다.
-        self.endpoint_cache: dict[str, EndpointCacheEntry] = {}
-        self.endpoint_cache_lock = threading.RLock()
-        self.scheduler_stop_event = threading.Event()
-        self.scheduler_threads: list[threading.Thread] = []
         self.db_pools: dict[str, DBConnectionPool] = {
             conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
             for conn_id in self.config.connections
@@ -96,10 +90,17 @@ class MonitoringBackend:
             pool_provider=lambda conn_id: self.db_pools[conn_id],
             logger=self.logger,
         )
+        self._cache_manager = EndpointCacheManager(
+            config_provider=lambda: self.config,
+            executor_provider=lambda: self.executor,
+            query_runner=self._jdbc.run_query,
+            connection_resetter=self.reset_connections,
+            logger=self.logger,
+        )
         self._sql_editor = SqlEditorService(
             sql_dir=sql_dir,
             config_provider=lambda: self.config,
-            on_sql_updated=lambda endpoint, client_ip: self.refresh_endpoint_cache(
+            on_sql_updated=lambda endpoint, client_ip: self._cache_manager.refresh_endpoint_cache(
                 endpoint, source="sql-update", client_ip=client_ip, reset_connection=True,
             ),
             logger=self.logger,
@@ -117,7 +118,7 @@ class MonitoringBackend:
                 ensure_jvm_started(classpath=all_jars)
             except Exception as exc:
                 self.logger.error("JVM pre-start failed (will retry on first query): %s", exc)
-        self._start_background_refreshers()
+        self._cache_manager.start()
         enabled_apis = [ep for ep in self.config.apis.values() if ep.enabled]
         _startup_log(
             self.logger,
@@ -130,131 +131,17 @@ class MonitoringBackend:
         for ep in enabled_apis:
             _startup_log(self.logger, "Hosted API id=%s path=%s", ep.api_id, ep.rest_api_path)
 
-    # ── Background refresh ────────────────────────────────────────────────
-
-    def _start_background_refreshers(self) -> None:
-        self.scheduler_stop_event.clear()
-        self.scheduler_threads = []
-
-        # ── Initial cache warm-up: run ALL endpoints once in parallel ─────
-        enabled_endpoints = [ep for ep in self.config.apis.values() if ep.enabled]
-        if enabled_endpoints:
-            self.logger.info(
-                "Starting initial cache warm-up for %d endpoints...",
-                len(enabled_endpoints),
-            )
-            futures = {
-                self.executor.submit(
-                    self.refresh_endpoint_cache,
-                    ep,
-                    source="startup",
-                    client_ip="scheduler",
-                ): ep.api_id
-                for ep in enabled_endpoints
-            }
-            for future in futures:
-                try:
-                    future.result(timeout=60)
-                except Exception as exc:
-                    api_id = futures[future]
-                    self.logger.error(
-                        "Initial cache warm-up failed apiId=%s: %s", api_id, exc,
-                    )
-            self.logger.info("Initial cache warm-up completed.")
-
-        # ── Start periodic refresh threads ────────────────────────────────
-        for endpoint in enabled_endpoints:
-            thread = threading.Thread(
-                target=self._refresh_endpoint_loop,
-                args=(endpoint.api_id,),
-                name=f"cache-refresh-{endpoint.api_id}",
-                daemon=True,
-            )
-            thread.start()
-            self.scheduler_threads.append(thread)
+    # ── Cache management (delegated to EndpointCacheManager) ──────────────
 
     def _stop_background_refreshers(self) -> None:
-        self.scheduler_stop_event.set()
-        for thread in self.scheduler_threads:
-            thread.join(timeout=1.5)
-        self.scheduler_threads = []
-
-    def _refresh_endpoint_loop(self, api_id: str) -> None:
-        """Periodic refresh only – initial warm-up is done in _start_background_refreshers."""
-        endpoint = self.config.apis.get(api_id)
-        if endpoint is None or not endpoint.enabled:
-            return
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(
-                "Scheduler thread started apiId=%s intervalSec=%s",
-                api_id, endpoint.refresh_interval_sec,
-            )
-        while not self.scheduler_stop_event.wait(endpoint.refresh_interval_sec):
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug("Scheduler tick apiId=%s", api_id)
-            self.refresh_endpoint_cache(endpoint, source="scheduler", client_ip="scheduler")
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug("Scheduler thread exited apiId=%s", api_id)
-
-    # ── Cache management ──────────────────────────────────────────────────
-
-    def _store_endpoint_cache_success(
-        self,
-        endpoint: ApiEndpointConfig,
-        data: Any,
-        *,
-        source: str,
-        started_at: str,
-        duration_sec: float,
-    ) -> EndpointCacheEntry:
-        entry = EndpointCacheEntry(
-            api_id=endpoint.api_id,
-            path=endpoint.rest_api_path,
-            connection_id=endpoint.connection_id,
-            data=data,
-            updated_at=datetime.now(timezone.utc).isoformat(),
-            last_refresh_started_at=started_at,
-            last_duration_sec=duration_sec,
-            error_message=None,
-            error_detail=None,
-            is_timeout=False,
-            source=source,
-        )
-        with self.endpoint_cache_lock:
-            self.endpoint_cache[endpoint.api_id] = entry
-        return entry
-
-    def _store_endpoint_cache_error(
-        self,
-        endpoint: ApiEndpointConfig,
-        *,
-        source: str,
-        started_at: str,
-        duration_sec: float,
-        message: str,
-        detail: str | None,
-        is_timeout: bool,
-    ) -> EndpointCacheEntry:
-        entry = EndpointCacheEntry(
-            api_id=endpoint.api_id,
-            path=endpoint.rest_api_path,
-            connection_id=endpoint.connection_id,
-            data=None,
-            updated_at=None,
-            last_refresh_started_at=started_at,
-            last_duration_sec=duration_sec,
-            error_message=message,
-            error_detail=detail,
-            is_timeout=is_timeout,
-            source=source,
-        )
-        with self.endpoint_cache_lock:
-            self.endpoint_cache[endpoint.api_id] = entry
-        return entry
+        # Kept for x_monitoring_be.py shutdown hook (still calls this name).
+        self._cache_manager.stop()
 
     def get_cached_endpoint_entry(self, api_id: str) -> EndpointCacheEntry | None:
-        with self.endpoint_cache_lock:
-            return self.endpoint_cache.get(api_id)
+        return self._cache_manager.get_cached_endpoint_entry(api_id)
+
+    def snapshot_cache_entries(self) -> dict[str, EndpointCacheEntry]:
+        return self._cache_manager.snapshot_entries()
 
     def refresh_endpoint_cache(
         self,
@@ -264,102 +151,19 @@ class MonitoringBackend:
         client_ip: str,
         reset_connection: bool = False,
     ) -> EndpointCacheEntry:
-        started_at = datetime.now(timezone.utc).isoformat()
-        started_timer = perf_counter()
-
-        if reset_connection:
-            self.reset_connections(endpoint.connection_id)
-
-        try:
-            data = self.run_query(endpoint, client_ip)
-            duration_sec = perf_counter() - started_timer
-            entry = self._store_endpoint_cache_success(
-                endpoint, data, source=source, started_at=started_at, duration_sec=duration_sec,
-            )
-            if isinstance(data, list):
-                result_summary = f"rows={len(data)}"
-            elif isinstance(data, dict) and "updated" in data:
-                result_summary = f"updated={data['updated']}"
-            else:
-                result_summary = "ok"
-            is_slow = duration_sec >= self.config.logging.slow_query_threshold_sec
-            log_fn = self.logger.warning if is_slow else self.logger.info
-            log_fn(
-                "Cache refreshed apiId=%s path=%s source=%s %s durationSec=%.3f clientIp=%s",
-                endpoint.api_id, endpoint.rest_api_path, source, result_summary, duration_sec, client_ip,
-            )
-            return entry
-        except QueryExecutionTimeoutError as error:
-            duration_sec = perf_counter() - started_timer
-            entry = self._store_endpoint_cache_error(
-                endpoint, source=source, started_at=started_at, duration_sec=duration_sec,
-                message="Database Query timeout", detail=str(error), is_timeout=True,
-            )
-            self.logger.warning(
-                "Endpoint cache refresh timeout apiId=%s path=%s source=%s durationSec=%.3f timeoutSec=%.3f",
-                endpoint.api_id, endpoint.rest_api_path, source, duration_sec, endpoint.query_timeout_sec,
-            )
-            return entry
-        except Exception as error:
-            duration_sec = perf_counter() - started_timer
-            entry = self._store_endpoint_cache_error(
-                endpoint, source=source, started_at=started_at, duration_sec=duration_sec,
-                message="Internal Server Error", detail=str(error), is_timeout=False,
-            )
-            self.logger.error(
-                "Endpoint cache refresh failed apiId=%s path=%s source=%s durationSec=%.3f detail=%s",
-                endpoint.api_id, endpoint.rest_api_path, source, duration_sec, error,
-            )
-            return entry
+        return self._cache_manager.refresh_endpoint_cache(
+            endpoint, source=source, client_ip=client_ip, reset_connection=reset_connection,
+        )
 
     def refresh_all_endpoint_caches(
         self, *, source: str, client_ip: str, reset_connection: bool = False,
     ) -> list[EndpointCacheEntry]:
-        return [
-            self.refresh_endpoint_cache(
-                endpoint, source=source, client_ip=client_ip, reset_connection=reset_connection,
-            )
-            for endpoint in self.config.apis.values()
-            if endpoint.enabled
-        ]
+        return self._cache_manager.refresh_all_endpoint_caches(
+            source=source, client_ip=client_ip, reset_connection=reset_connection,
+        )
 
     def get_cached_endpoint_response(self, endpoint: ApiEndpointConfig, client_ip: str) -> Any:
-        entry = self.get_cached_endpoint_entry(endpoint.api_id)
-        if entry and entry.data is not None:
-            if self.logger.isEnabledFor(logging.DEBUG):
-                row_count = len(entry.data) if isinstance(entry.data, list) else 1
-                self.logger.debug(
-                    "Cache HIT apiId=%s path=%s rowCount=%d updatedAt=%s source=%s clientIp=%s",
-                    endpoint.api_id, endpoint.rest_api_path, row_count,
-                    entry.updated_at, entry.source, client_ip,
-                )
-            return entry.data
-
-        if entry and entry.error_message:
-            if self.logger.isEnabledFor(logging.DEBUG):
-                self.logger.debug(
-                    "Cache HIT (error) apiId=%s message=%s isTimeout=%s clientIp=%s",
-                    endpoint.api_id, entry.error_message, entry.is_timeout, client_ip,
-                )
-            raise CachedEndpointError(
-                endpoint.api_id, entry.error_message, detail=entry.error_detail, is_timeout=entry.is_timeout,
-            )
-
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(
-                "Cache MISS apiId=%s path=%s — refreshing on-demand clientIp=%s",
-                endpoint.api_id, endpoint.rest_api_path, client_ip,
-            )
-        refreshed_entry = self.refresh_endpoint_cache(endpoint, source="on-demand", client_ip=client_ip)
-        if refreshed_entry.data is not None:
-            return refreshed_entry.data
-
-        raise CachedEndpointError(
-            endpoint.api_id,
-            refreshed_entry.error_message or "Internal Server Error",
-            detail=refreshed_entry.error_detail,
-            is_timeout=refreshed_entry.is_timeout,
-        )
+        return self._cache_manager.get_cached_endpoint_response(endpoint, client_ip)
 
     # ── Query execution (delegated to JdbcQueryExecutor) ──────────────────
 
@@ -485,16 +289,16 @@ class MonitoringBackend:
         configure_logging(new_config.logging)
         self.logger = logging.getLogger("monitoring_backend")
         self.config = new_config
-        with self.endpoint_cache_lock:
-            self.endpoint_cache.clear()
+        self._cache_manager.clear()
         self.db_pools = {
             conn_id: DBConnectionPool(max_size=int(get_env("DB_POOL_SIZE", "5")))
             for conn_id in new_config.connections
         }
         # LogReader holds a snapshot of logging-config (directory / file_prefix);
-        # DbHealthService reads config/executor/pools via providers so needs no refresh.
+        # DbHealthService / JdbcQueryExecutor / EndpointCacheManager read
+        # config/executor/pools via providers so they need no refresh.
         self._log_reader.update_logging_config(new_config.logging)
-        self._start_background_refreshers()
+        self._cache_manager.start()
 
         enabled_apis = [ep for ep in new_config.apis.values() if ep.enabled]
         _startup_log(

@@ -27,8 +27,7 @@ def register(app, backend, limiter) -> None:
     @require_auth
     def dashboard_cache_status():
         """Return per-endpoint cache health: refresh time, duration, row count, errors."""
-        with backend.endpoint_cache_lock:
-            snapshot = dict(backend.endpoint_cache)
+        snapshot = backend.snapshot_cache_entries()
 
         entries = []
         for api_id, entry in snapshot.items():
