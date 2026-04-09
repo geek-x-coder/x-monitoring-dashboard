@@ -431,3 +431,34 @@
     background: rgba(255, 99, 99, 0.18);
     color: #ffb5b5;
 }
+
+/* ═══ Container-query responsive ═══════════════════════════════ */
+
+@container (max-width: 359px) {
+    .bc-header {
+        padding: 8px 10px;
+    }
+
+    .bc-orient-icon {
+        font-size: 12px;
+    }
+
+    .bc-truncation-notice {
+        font-size: 9px;
+        padding: 2px 6px;
+    }
+}
+
+@container (max-width: 259px) {
+    .bc-header {
+        padding: 6px 8px;
+    }
+
+    .bc-orient-icon {
+        font-size: 10px;
+    }
+
+    .bc-truncation-notice {
+        font-size: 8px;
+    }
+}

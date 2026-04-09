@@ -601,9 +601,15 @@
 }
 
 .react-grid-item {
+    container-type: inline-size;
+    overflow: visible;
     transition:
         box-shadow 0.2s ease,
         transform 0.2s ease;
+}
+
+.react-grid-item > .grid-item {
+    height: 100%;
 }
 
 .react-grid-item.react-draggable-dragging {

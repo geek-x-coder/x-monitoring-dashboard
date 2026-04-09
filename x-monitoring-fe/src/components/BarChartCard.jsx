@@ -776,7 +776,7 @@ const BarChartCard = ({
                                 {rows.length.toLocaleString()}개)
                             </div>
                         )}
-                        <ResponsiveContainer width='100%' height='100%'>
+                        <ResponsiveContainer width='100%' height='100%' minWidth={0} minHeight={0}>
                             <BarChart
                                 layout={rechartsLayout}
                                 data={chartRows}

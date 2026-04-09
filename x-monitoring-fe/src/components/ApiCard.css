@@ -828,3 +828,172 @@
         transform: scale(0.75);
     }
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   Container-query responsive — widget 자체 너비 기준 축소
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── md: 위젯 너비 < 360px ──────────────────────────────────── */
+@container (max-width: 359px) {
+    .api-card-header {
+        padding: 8px 10px 6px;
+        min-height: 48px;
+    }
+
+    .api-card-title-row {
+        gap: 6px;
+    }
+
+    .api-card-header h4 {
+        font-size: 12px;
+    }
+
+    .status-pill {
+        font-size: 9px;
+        padding: 2px 6px;
+        gap: 4px;
+    }
+
+    .status-dot {
+        width: 5px;
+        height: 5px;
+    }
+
+    .alert-pill {
+        font-size: 9px;
+        padding: 2px 6px;
+    }
+
+    .title-meta {
+        font-size: 9px;
+    }
+
+    .compact-icon-btn {
+        width: 24px;
+        height: 24px;
+        font-size: 12px;
+        border-radius: 7px;
+    }
+
+    .title-actions {
+        gap: 3px;
+    }
+
+    .api-endpoint-row {
+        margin-top: 4px;
+        gap: 6px;
+    }
+
+    .api-endpoint {
+        font-size: 9px;
+    }
+
+    .refresh-interval-chip,
+    .last-updated-time {
+        font-size: 9px;
+    }
+
+    .status-badge {
+        font-size: 9px;
+        padding: 1px 4px;
+    }
+
+    .status-list-item {
+        gap: 5px;
+        padding: 3px 6px;
+    }
+
+    .status-list-label {
+        font-size: 0.68rem;
+    }
+
+    .status-list-url {
+        font-size: 0.64rem;
+    }
+
+    .status-list-latency {
+        font-size: 0.64rem;
+    }
+}
+
+/* ── sm: 위젯 너비 < 260px ──────────────────────────────────── */
+@container (max-width: 259px) {
+    .api-card-header {
+        padding: 6px 8px 5px;
+        min-height: 40px;
+    }
+
+    .api-card-title-row {
+        gap: 4px;
+    }
+
+    .api-card-header h4 {
+        font-size: 11px;
+    }
+
+    .status-pill {
+        font-size: 8px;
+        padding: 2px 5px;
+        gap: 3px;
+    }
+
+    .status-dot {
+        width: 4px;
+        height: 4px;
+    }
+
+    .alert-pill {
+        font-size: 8px;
+        padding: 2px 5px;
+    }
+
+    .compact-icon-btn {
+        width: 20px;
+        height: 20px;
+        font-size: 10px;
+        border-radius: 5px;
+    }
+
+    .title-actions {
+        gap: 2px;
+    }
+
+    .api-endpoint-row {
+        margin-top: 2px;
+        gap: 4px;
+    }
+
+    .api-endpoint {
+        font-size: 8px;
+    }
+
+    .refresh-interval-chip {
+        display: none;
+    }
+
+    .last-updated-time {
+        font-size: 8px;
+    }
+
+    .status-badge {
+        font-size: 8px;
+        padding: 0 3px;
+    }
+
+    .status-list-item {
+        gap: 4px;
+        padding: 2px 5px;
+    }
+
+    .status-list-label {
+        font-size: 0.62rem;
+    }
+
+    .status-list-url {
+        display: none;
+    }
+
+    .status-list-latency {
+        font-size: 0.58rem;
+    }
+}

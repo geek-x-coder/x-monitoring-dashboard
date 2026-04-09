@@ -243,3 +243,36 @@
         font-size: 14px;
     }
 }
+
+/* Container-query responsive */
+@container (max-width: 359px) {
+    .dynamic-table {
+        font-size: 11px;
+    }
+
+    .dynamic-table th {
+        padding: 6px 8px;
+        font-size: 10px;
+    }
+
+    .dynamic-table td {
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+}
+
+@container (max-width: 259px) {
+    .dynamic-table {
+        font-size: 10px;
+    }
+
+    .dynamic-table th {
+        padding: 4px 6px;
+        font-size: 9px;
+    }
+
+    .dynamic-table td {
+        padding: 4px 6px;
+        font-size: 10px;
+    }
+}

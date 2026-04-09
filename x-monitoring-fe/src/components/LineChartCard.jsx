@@ -788,7 +788,7 @@ const LineChartCard = ({
                                 {chartRows.length}포인트 표시 (다운샘플링)
                             </div>
                         )}
-                        <ResponsiveContainer width='100%' height='100%'>
+                        <ResponsiveContainer width='100%' height='100%' minWidth={0} minHeight={0}>
                             <LineChart
                                 data={chartRows}
                                 margin={{
