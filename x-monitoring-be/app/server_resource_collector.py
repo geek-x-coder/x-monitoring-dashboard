@@ -436,6 +436,10 @@ def collect_server_resources(spec: dict[str, Any], logger: logging.Logger | None
 
     try:
         if os_type == "windows-winrm":
+            # WinRM requires credentials — fall back to local WMI if local + no creds
+            if is_local and (not username or not password):
+                metrics = _collect_windows_wmi(run_cmd, host, True, username, password, domain)
+                return {"osType": "windows-winrm", "host": host, **metrics}
             winrm_port = int(spec.get("port", 5985))
             metrics = _collect_windows_winrm(
                 host, winrm_port, username, password, domain, transport,

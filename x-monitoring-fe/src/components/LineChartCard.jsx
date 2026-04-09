@@ -16,6 +16,8 @@ import {
     THRESHOLD_COLORS,
     normalizeThresholds,
 } from "../utils/chartThresholds.js";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
+import "./ApiCard.css";
 import "./LineChartCard.css";
 
 const CHART_COLORS = [
@@ -110,6 +112,12 @@ const detectColumns = (rows) => {
     return Array.from(cols);
 };
 
+const formatInterval = (sec) => {
+    if (sec >= 3600) return `every ${Math.floor(sec / 3600)}h`;
+    if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
+    return `every ${sec}s`;
+};
+
 const ChartTooltip = ({ active, payload, label }) => {
     if (!active || !payload?.length) return null;
     return (
@@ -152,6 +160,7 @@ const LineChartCard = ({
     onChartSettingsChange,
 }) => {
     const [showSettings, setShowSettings] = useState(false);
+    const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
     const [timeRange, setTimeRange] = useState(
         chartSettings?.timeRange ?? "all",
     );
@@ -198,6 +207,10 @@ const LineChartCard = ({
     useEffect(() => {
         setThresholdsDraft(normalizeThresholds(chartSettings?.thresholds));
     }, [chartSettings?.thresholds]);
+
+    useEffect(() => {
+        if (data != null) setLastUpdatedAt(new Date());
+    }, [data]);
 
     const rows = useMemo(() => normalizeData(data), [data]);
     const detectedColumns = useMemo(() => detectColumns(rows), [rows]);
@@ -282,8 +295,8 @@ const LineChartCard = ({
         }
 
         const nextInterval = Math.min(
-            3600,
-            Math.max(1, Number(intervalDraft) || 5),
+            MAX_REFRESH_INTERVAL_SEC,
+            Math.max(MIN_REFRESH_INTERVAL_SEC, Number(intervalDraft) || MIN_REFRESH_INTERVAL_SEC),
         );
         setIntervalDraft(nextInterval);
         onRefreshIntervalChange?.(nextInterval);
@@ -643,8 +656,8 @@ const LineChartCard = ({
                                 <label>체크 주기 (초)</label>
                                 <input
                                     type='number'
-                                    min='1'
-                                    max='3600'
+                                    min={MIN_REFRESH_INTERVAL_SEC}
+                                    max={MAX_REFRESH_INTERVAL_SEC}
                                     value={intervalDraft}
                                     onChange={(e) =>
                                         setIntervalDraft(e.target.value)
@@ -679,52 +692,79 @@ const LineChartCard = ({
         <div className='lc-card'>
             {/* Header */}
             <div className='api-card-header lc-header'>
-                <div className='lc-header-left'>
-                    <span className='lc-title'>{title}</span>
-                    <span className={`status-pill ${statusLabel}`}>
-                        <span className='status-dot' />
-                        {statusLabel === "loading"
-                            ? "..."
-                            : statusLabel === "dead"
-                              ? "DEAD"
-                              : statusLabel === "slow-live"
-                                ? "SLOW"
-                                : "LIVE"}
-                    </span>
-                </div>
-                <div className='lc-header-right'>
-                    <div className='lc-time-ranges'>
-                        {TIME_RANGES.map((r) => (
+                <div className='api-card-title-section'>
+                    <div className='api-card-title-row'>
+                        <h4 title={title}>{title}</h4>
+                        <span className={`status-pill ${statusLabel}`}>
+                            <span className='status-dot' />
+                            {statusLabel === "loading"
+                                ? "..."
+                                : statusLabel === "dead"
+                                  ? "DEAD"
+                                  : statusLabel === "slow-live"
+                                    ? "SLOW"
+                                    : "LIVE"}
+                        </span>
+                        <div className='lc-time-ranges'>
+                            {TIME_RANGES.map((r) => (
+                                <button
+                                    key={r.key}
+                                    className={`lc-range-btn${timeRange === r.key ? " active" : ""}`}
+                                    onClick={() => handleTimeRangeChange(r.key)}
+                                >
+                                    {r.label}
+                                </button>
+                            ))}
+                        </div>
+                        <div className='title-actions'>
                             <button
-                                key={r.key}
-                                className={`lc-range-btn${timeRange === r.key ? " active" : ""}`}
-                                onClick={() => handleTimeRangeChange(r.key)}
+                                type='button'
+                                className='compact-icon-btn'
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    onRefresh();
+                                }}
+                                title='새로고침'
                             >
-                                {r.label}
+                                ⟳
                             </button>
-                        ))}
+                            <button
+                                type='button'
+                                className='compact-icon-btn'
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    setShowSettings((v) => !v);
+                                }}
+                                title='설정'
+                            >
+                                ⚙
+                            </button>
+                            <button
+                                type='button'
+                                className='compact-icon-btn remove'
+                                onClick={(event) => {
+                                    event.stopPropagation();
+                                    onRemove();
+                                }}
+                                title='삭제'
+                            >
+                                ✕
+                            </button>
+                        </div>
                     </div>
-                    <button
-                        className='lc-action-btn'
-                        title='새로고침'
-                        onClick={onRefresh}
-                    >
-                        ↻
-                    </button>
-                    <button
-                        className='lc-action-btn'
-                        title='설정'
-                        onClick={() => setShowSettings((v) => !v)}
-                    >
-                        ⚙
-                    </button>
-                    <button
-                        className='lc-action-btn lc-action-btn-danger'
-                        title='삭제'
-                        onClick={onRemove}
-                    >
-                        ✕
-                    </button>
+                    <div className='api-endpoint-row'>
+                        <div className='api-endpoint-info'>
+                            <span className='api-endpoint'>{endpoint}</span>
+                            <span className='refresh-interval-chip'>
+                                ⏱ {formatInterval(refreshIntervalSec ?? 5)}
+                            </span>
+                        </div>
+                        {lastUpdatedAt && (
+                            <span className='last-updated-time'>
+                                {lastUpdatedAt.toLocaleTimeString("en-GB", { hour12: false })}
+                            </span>
+                        )}
+                    </div>
                 </div>
             </div>
 

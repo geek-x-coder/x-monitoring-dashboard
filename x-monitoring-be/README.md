@@ -47,7 +47,7 @@ x-monitoring-fe와 연동되는 Python 기반 모니터링 백엔드입니다.
 - **Ping/Telnet 테스트** — `POST /dashboard/network-test`로 네트워크 연결 진단
 - **서버 리소스 모니터링** — `POST /dashboard/server-resources`로 원격/로컬 서버 CPU·메모리·디스크 수집
   - Linux: SSH(paramiko)로 원격 접속하여 `top`, `/proc/meminfo`, `df` 실행
-  - Windows: WMI 명령으로 수집
+  - Windows: WMI 명령, SSH+PowerShell, 또는 WinRM(pywinrm)으로 수집
 - **Health-Check 프록시** — `POST /dashboard/health-check-proxy`로 CORS 우회 HTTP 상태 체크
 
 ### DB 성능 진단
@@ -86,6 +86,7 @@ pip install -r requirements.txt
 | PyJWT | JWT 인증 |
 | JayDeBeApi, JPype1 | JDBC 브릿지 (Java DB 드라이버 사용) |
 | paramiko | SSH 원격 명령 실행 (서버 리소스 모니터링) |
+| pywinrm | WinRM 원격 명령 실행 (Windows 서버 리소스 모니터링) |
 | requests | HTTP 클라이언트 (Health-Check 프록시) |
 | pyinstaller | EXE 패키징 |
 
@@ -625,6 +626,24 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 }
 ```
 
+**요청 body (Windows WinRM 원격 서버):**
+
+```json
+{
+    "os_type": "windows-winrm",
+    "host": "192.168.0.100",
+    "username": "Administrator",
+    "password": "winpass",
+    "port": 5985,
+    "domain": "MYDOMAIN",
+    "transport": "ntlm"
+}
+```
+
+> - `port`: WinRM 포트 (기본 5985=HTTP, 5986=HTTPS)
+> - `transport`: 인증 방식 — `ntlm`(기본), `basic`, `kerberos`, `credssp`
+> - `domain`: 도메인 지정 시 `DOMAIN\username` 형태로 인증
+
 **응답 예시:**
 
 ```json
@@ -648,8 +667,11 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 | os_type 값 | 설명 |
 |------------|------|
 | `windows` | Windows 서버 (로컬: WMI, 원격: WMI /node) |
+| `windows-ssh` | Windows 서버 (SSH + PowerShell, paramiko) |
+| `windows-winrm` | Windows 서버 (WinRM + PowerShell, pywinrm) |
 | `linux-rhel8` | RHEL 8.x / CentOS 8.x |
 | `linux-rhel7` | RHEL 7.x / CentOS 7.x |
+| `linux-ubuntu24` | Ubuntu 24.04 |
 | `linux-generic` | 범용 Linux (Ubuntu, Debian 등) |
 
 **배치 요청 body (`/dashboard/server-resources-batch`):**
@@ -658,7 +680,8 @@ curl -X POST http://127.0.0.1:5000/dashboard/cache/refresh \
 {
     "servers": [
         { "os_type": "linux-rhel8", "host": "192.168.0.71", "username": "sshuser", "password": "sshpass", "port": 322 },
-        { "os_type": "windows", "host": "localhost" }
+        { "os_type": "windows", "host": "localhost" },
+        { "os_type": "windows-winrm", "host": "192.168.0.100", "username": "Administrator", "password": "winpass", "port": 5985 }
     ]
 }
 ```
@@ -825,8 +848,11 @@ logs/x_monitoring_be-YYYY-MM-DD.log
 프론트엔드 위젯에서 직접 서버 접속 정보를 설정합니다 (백엔드 config.json에 설정 불필요).
 
 - **Linux 서버**: SSH 접속 정보 필요 (호스트, 포트, 계정, 비밀번호)
-- **Windows 서버**: 로컬은 자동, 원격은 WMI 접근 필요
+- **Windows 서버 (WMI)**: 로컬은 자동, 원격은 WMI 접근 필요
+- **Windows 서버 (WinRM)**: WinRM 접속 정보 필요 (호스트, 포트, 계정, 비밀번호, 도메인, transport)
 - 백엔드에 `paramiko` 패키지가 설치되어 있어야 SSH 접속 가능
+- 백엔드에 `pywinrm` 패키지가 설치되어 있어야 WinRM 접속 가능
+- WinRM 대상 서버에서 `winrm quickconfig` 실행으로 WinRM 서비스가 활성화되어 있어야 함
 
 ### 13.5 백업 & 복원
 
@@ -1089,8 +1115,11 @@ curl -H "Authorization: Bearer <token>" http://127.0.0.1:5000/dashboard/cache/st
 | 원인 | 해결 |
 |------|------|
 | paramiko 미설치 | `pip install paramiko` 후 EXE 재빌드 |
+| pywinrm 미설치 | `pip install pywinrm` 후 EXE 재빌드 |
 | SSH 접속 실패 | 호스트/포트/계정 확인, 방화벽 확인 |
 | SSH 포트가 기본(22)이 아닌 경우 | 위젯 설정에서 SSH 포트 지정 |
+| WinRM 접속 실패 | 대상 서버에서 `winrm quickconfig` 실행 확인, 방화벽에서 5985/5986 포트 허용 확인 |
+| WinRM 인증 실패 | 계정/비밀번호/도메인 확인, transport 설정 확인 (기본 NTLM) |
 | 원격 서버에 `top` 명령이 없음 | `procps` 패키지 설치 (`yum install procps`) |
 
 ### 15.5 프론트엔드 연결 실패 (CORS)

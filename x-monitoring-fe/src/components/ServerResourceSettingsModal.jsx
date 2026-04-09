@@ -4,6 +4,7 @@ import {
     MAX_SERVERS,
     OS_OPTIONS,
 } from "./serverResourceHelpers";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 
 /**
  * ServerResource widget settings modal extracted from ServerResourceCard (SRP).
@@ -419,8 +420,8 @@ const ServerResourceSettingsModal = ({
                                     <span>Interval</span>
                                     <input
                                         type='number'
-                                        min='5'
-                                        max='3600'
+                                        min={MIN_REFRESH_INTERVAL_SEC}
+                                        max={MAX_REFRESH_INTERVAL_SEC}
                                         value={intervalDraft}
                                         onChange={(e) =>
                                             onIntervalDraftChange(e.target.value)

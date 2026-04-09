@@ -6,12 +6,14 @@ import {
     useMemo,
 } from "react";
 import apiClient from "../services/http.js";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import {
     DEFAULT_CRITERIA,
     MAX_HISTORY,
     MAX_SERVERS,
     checkCriteria,
     clamp,
+    formatElapsed,
     formatInterval,
     formatTime,
     generateId,
@@ -133,12 +135,14 @@ const ServerResourceCard = ({
                 const next = { ...prev };
                 list.forEach((srv, i) => {
                     const data = batchResults[i] || null;
+                    const now = new Date();
                     if (data) {
                         next[srv.id] = {
                             data,
                             error: data.error || null,
                             loading: false,
-                            lastUpdated: new Date(),
+                            lastUpdated: now,
+                            lastAttempted: now,
                         };
                     } else {
                         next[srv.id] = {
@@ -146,23 +150,24 @@ const ServerResourceCard = ({
                             error: "No result from batch",
                             loading: false,
                             lastUpdated: next[srv.id]?.lastUpdated ?? null,
+                            lastAttempted: now,
                         };
                     }
                 });
                 return next;
             });
         } catch (err) {
+            const errorMsg =
+                err?.response?.data?.message || err?.message || "요청 실패";
             setServerStates((prev) => {
                 const next = { ...prev };
                 list.forEach((srv) => {
                     next[srv.id] = {
                         data: next[srv.id]?.data ?? null,
-                        error:
-                            err?.response?.data?.message ||
-                            err?.message ||
-                            "요청 실패",
+                        error: errorMsg,
                         loading: false,
                         lastUpdated: next[srv.id]?.lastUpdated ?? null,
+                        lastAttempted: new Date(),
                     };
                 });
                 return next;
@@ -275,6 +280,23 @@ const ServerResourceCard = ({
         });
     }, [servers, serverStates]);
 
+    // Stale: data exists but last successful fetch is too old, or
+    // the most recent attempt failed while old data is still displayed
+    const isStale = useMemo(() => {
+        if (servers.length === 0 || isDead) return false;
+        const staleSec = (refreshIntervalSec ?? 30) * 3;
+        const now = Date.now();
+        return servers.some((srv) => {
+            const st = serverStates[srv.id];
+            if (!st) return false;
+            // Has error while showing stale data
+            if (st.error && st.data) return true;
+            // Last successful update is too old
+            if (st.lastUpdated && (now - st.lastUpdated.getTime()) > staleSec * 1000) return true;
+            return false;
+        });
+    }, [servers, serverStates, isDead, refreshIntervalSec]);
+
     // Report alarm status to parent
     useEffect(() => {
         if (!onAlarmChange) return;
@@ -342,7 +364,7 @@ const ServerResourceCard = ({
     };
 
     const handleIntervalApply = () => {
-        const v = clamp(intervalDraft, 5, 3600, 30);
+        const v = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, 30);
         setIntervalDraft(v);
         onRefreshIntervalChange(v);
     };
@@ -422,6 +444,14 @@ const ServerResourceCard = ({
         return latest;
     }, [serverStates]);
 
+    // Tick for elapsed time display (only active when stale/dead)
+    const [, setElapsedTick] = useState(0);
+    useEffect(() => {
+        if (!isStale && !isDead) return;
+        const id = setInterval(() => setElapsedTick((v) => v + 1), 10_000);
+        return () => clearInterval(id);
+    }, [isStale, isDead]);
+
     /* ── render: main card ───────────────────────────────────────── */
     return (
         <div className='api-card'>
@@ -433,6 +463,12 @@ const ServerResourceCard = ({
                             <span className='status-pill dead'>
                                 <span className='status-dot' />
                                 DEAD
+                            </span>
+                        )}
+                        {!isDead && isStale && (
+                            <span className='status-pill stale'>
+                                <span className='status-dot' />
+                                STALE
                             </span>
                         )}
                         <div className='title-actions'>
@@ -491,8 +527,13 @@ const ServerResourceCard = ({
                             ⏱ {formatInterval(refreshIntervalSec ?? 30)}
                         </span>
                         {lastUpdated && (
-                            <span className='last-updated-time'>
-                                {formatTime(lastUpdated)}
+                            <span
+                                className={`last-updated-time${isStale || isDead ? " stale" : ""}`}
+                                title={formatTime(lastUpdated)}
+                            >
+                                {isStale || isDead
+                                    ? formatElapsed(lastUpdated)
+                                    : formatTime(lastUpdated)}
                             </span>
                         )}
                     </div>

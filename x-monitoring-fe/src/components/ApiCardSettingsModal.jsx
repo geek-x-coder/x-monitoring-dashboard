@@ -1,6 +1,7 @@
 import React from "react";
 import { createPortal } from "react-dom";
 import { getDefaultColumnWidth } from "./apiCardHelpers";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 
 /**
  * Widget settings popup extracted from ApiCard (SRP).
@@ -149,8 +150,8 @@ const ApiCardSettingsModal = ({
                                     <span>Interval</span>
                                     <input
                                         type='number'
-                                        min='1'
-                                        max='3600'
+                                        min={MIN_REFRESH_INTERVAL_SEC}
+                                        max={MAX_REFRESH_INTERVAL_SEC}
                                         value={intervalDraft}
                                         onChange={(event) =>
                                             onIntervalDraftChange(event.target.value)

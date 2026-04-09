@@ -21,6 +21,9 @@ JPype1==1.6.0
 # SSH remote command execution (server resource monitoring)
 paramiko==4.0.0
 
+# WinRM remote command execution (Windows server resource monitoring)
+pywinrm==0.4.3
+
 # HTTP client (health-check proxy)
 requests==2.33.1
 

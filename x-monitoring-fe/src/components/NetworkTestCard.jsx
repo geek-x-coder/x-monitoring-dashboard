@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import apiClient from "../services/http.js";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import "./ApiCard.css";
 import "./NetworkTestCard.css";
 
@@ -260,7 +261,7 @@ const NetworkTestCard = ({
     useEffect(() => {
         if (targets.length === 0) return undefined;
         // refreshIntervalSec이 string("30")으로 들어와도 안전하게 처리한다.
-        const sec = Math.max(1, Number(refreshIntervalSec) || 10);
+        const sec = Math.max(MIN_REFRESH_INTERVAL_SEC, Number(refreshIntervalSec) || 10);
         const id = setInterval(checkAllTargets, sec * 1000);
         return () => clearInterval(id);
     }, [targetsKey, refreshIntervalSec, checkAllTargets]);
@@ -328,7 +329,7 @@ const NetworkTestCard = ({
     };
 
     const handleIntervalApply = () => {
-        const v = clamp(intervalDraft, 1, 3600, 10);
+        const v = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, 10);
         setIntervalDraft(v);
         onRefreshIntervalChange(v);
     };
@@ -432,7 +433,7 @@ const NetworkTestCard = ({
                         <div className="settings-section refresh-interval-section">
                             <h6>갱신 주기 (초)</h6>
                             <div className="refresh-interval-editor">
-                                <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min="1" max="3600" value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
+                                <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min={MIN_REFRESH_INTERVAL_SEC} max={MAX_REFRESH_INTERVAL_SEC} value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
                                 <button type="button" className="size-preset-btn" onClick={handleIntervalApply}>적용</button>
                             </div>
                         </div>

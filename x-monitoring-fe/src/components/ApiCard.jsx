@@ -13,6 +13,7 @@ import {
     normalizeData,
     reorderItems,
 } from "./apiCardHelpers";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import ApiCardRowDetailModal from "./ApiCardRowDetailModal";
 import ApiCardSettingsModal from "./ApiCardSettingsModal";
 import "./ApiCard.css";
@@ -346,7 +347,7 @@ const ApiCard = ({
     };
 
     const handleIntervalApply = () => {
-        const nextInterval = clamp(intervalDraft, 1, 3600, 5);
+        const nextInterval = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, MIN_REFRESH_INTERVAL_SEC);
         setIntervalDraft(nextInterval);
         onRefreshIntervalChange(nextInterval);
     };

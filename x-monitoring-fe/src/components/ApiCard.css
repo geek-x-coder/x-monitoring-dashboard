@@ -119,6 +119,12 @@
     border-color: rgba(255, 107, 129, 0.18);
 }
 
+.status-pill.stale {
+    color: #fbbf24;
+    background-color: rgba(251, 191, 36, 0.12);
+    border-color: rgba(251, 191, 36, 0.18);
+}
+
 .alert-pill {
     display: inline-flex;
     align-items: center;
@@ -257,6 +263,12 @@
     opacity: 0.75;
     white-space: nowrap;
     letter-spacing: 0.02em;
+}
+
+.last-updated-time.stale {
+    color: #fbbf24;
+    opacity: 1;
+    font-weight: 600;
 }
 
 .api-card-content {

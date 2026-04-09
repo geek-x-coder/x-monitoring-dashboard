@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import "./ApiCard.css";
 import "./HealthCheckCard.css";
 
@@ -32,6 +33,7 @@ const HealthCheckCard = ({
     const [intervalDraft, setIntervalDraft] = useState(refreshIntervalSec ?? 5);
     const [titleDraft, setTitleDraft] = useState(title);
     const [endpointDraft, setEndpointDraft] = useState(endpoint);
+    const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
 
     useEffect(() => {
         setSizeDraft({
@@ -43,6 +45,12 @@ const HealthCheckCard = ({
     useEffect(() => {
         setIntervalDraft(refreshIntervalSec ?? 5);
     }, [refreshIntervalSec]);
+
+    useEffect(() => {
+        if (healthData != null) {
+            setLastUpdatedAt(new Date());
+        }
+    }, [healthData]);
 
     useEffect(() => {
         setTitleDraft(title);
@@ -57,6 +65,9 @@ const HealthCheckCard = ({
         if (sec >= 60) return `every ${Math.floor(sec / 60)}m`;
         return `every ${sec}s`;
     };
+
+    const formatLocalTime = (date) =>
+        date ? date.toLocaleTimeString("en-GB", { hour12: false }) : null;
 
     const statusLabel = loading
         ? "loading"
@@ -110,7 +121,7 @@ const HealthCheckCard = ({
     };
 
     const handleIntervalApply = () => {
-        const nextInterval = clamp(intervalDraft, 1, 3600, 5);
+        const nextInterval = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, MIN_REFRESH_INTERVAL_SEC);
         setIntervalDraft(nextInterval);
         onRefreshIntervalChange(nextInterval);
     };
@@ -238,8 +249,8 @@ const HealthCheckCard = ({
                                     <span>Interval</span>
                                     <input
                                         type='number'
-                                        min='1'
-                                        max='3600'
+                                        min={MIN_REFRESH_INTERVAL_SEC}
+                                        max={MAX_REFRESH_INTERVAL_SEC}
                                         value={intervalDraft}
                                         onChange={(event) =>
                                             setIntervalDraft(event.target.value)
@@ -315,6 +326,11 @@ const HealthCheckCard = ({
                                 ⏱ {formatInterval(refreshIntervalSec ?? 5)}
                             </span>
                         </div>
+                        {lastUpdatedAt && (
+                            <span className='last-updated-time'>
+                                {formatLocalTime(lastUpdatedAt)}
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>

@@ -19,10 +19,6 @@
 
 /* Header */
 .lc-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
     flex-shrink: 0;
     padding: 10px 14px;
     background:
@@ -33,60 +29,6 @@
         ),
         rgba(15, 20, 29, 0.92);
     border-bottom: 1px solid rgba(148, 163, 184, 0.08);
-    min-height: 44px;
-    flex-wrap: wrap;
-    row-gap: 4px;
-}
-
-.lc-header-left {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-.lc-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-primary, #e4ebf5);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 240px;
-}
-
-/* Status pill — reuse DashboardPage global styles if present */
-.status-pill {
-    font-size: 10px;
-    padding: 2px 7px;
-    border-radius: 999px;
-    font-weight: 600;
-    letter-spacing: 0.4px;
-    flex-shrink: 0;
-}
-.status-pill.live {
-    background: rgba(0, 205, 176, 0.15);
-    color: #00cdb0;
-}
-.status-pill.dead {
-    background: rgba(255, 99, 99, 0.15);
-    color: #ff6363;
-}
-.status-pill.loading {
-    background: rgba(255, 209, 102, 0.15);
-    color: #ffd166;
-}
-.status-pill.slow-live {
-    background: rgba(255, 209, 102, 0.15);
-    color: #ffd166;
-}
-
-/* Header right: time-range + actions */
-.lc-header-right {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    flex-shrink: 0;
 }
 
 /* Time range toggle (segmented control) */
@@ -126,32 +68,6 @@
     font-weight: 600;
 }
 
-/* Action buttons */
-.lc-action-btn {
-    width: 26px;
-    height: 26px;
-    border-radius: 5px;
-    border: 1px solid rgba(255, 255, 255, 0.09);
-    background: transparent;
-    color: #7a90a8;
-    font-size: 14px;
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    transition:
-        background 0.15s,
-        color 0.15s;
-}
-.lc-action-btn:hover {
-    background: rgba(255, 255, 255, 0.08);
-    color: #c8d8ea;
-}
-.lc-action-btn-danger:hover {
-    background: rgba(255, 99, 99, 0.12);
-    color: #ff6363;
-    border-color: rgba(255, 99, 99, 0.25);
-}
 
 /* Settings panel */
 .lc-settings-panel {

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
+import { MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC } from "../pages/dashboardConstants";
 import "./ApiCard.css";
 import "./StatusListCard.css";
 
@@ -140,7 +141,7 @@ const StatusListCard = ({
     };
 
     const handleIntervalApply = () => {
-        const nextInterval = clamp(intervalDraft, 1, 3600, 5);
+        const nextInterval = clamp(intervalDraft, MIN_REFRESH_INTERVAL_SEC, MAX_REFRESH_INTERVAL_SEC, MIN_REFRESH_INTERVAL_SEC);
         setIntervalDraft(nextInterval);
         onRefreshIntervalChange(nextInterval);
     };
@@ -301,8 +302,8 @@ const StatusListCard = ({
                                     <span>Interval</span>
                                     <input
                                         type='number'
-                                        min='1'
-                                        max='3600'
+                                        min={MIN_REFRESH_INTERVAL_SEC}
+                                        max={MAX_REFRESH_INTERVAL_SEC}
                                         value={intervalDraft}
                                         onChange={(event) =>
                                             setIntervalDraft(event.target.value)

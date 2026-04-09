@@ -689,11 +689,16 @@ Ping 또는 TCP 연결(Telnet) 테스트를 수행합니다.
 
    | 항목 | 설명 | 예시 |
    |------|------|------|
-   | OS 타입 | 대상 서버의 운영체제 | `Linux (RHEL 8.x)`, `Windows` |
+   | OS 타입 | 대상 서버의 운영체제 | `Linux (RHEL 8.x)`, `Windows (WMI)`, `Windows (WinRM)` |
    | 호스트 | 서버 IP 또는 도메인 | `192.168.0.71` |
-   | SSH 사용자 | Linux 원격 접속 계정 | `sshuser` |
-   | SSH 비밀번호 | Linux 원격 접속 비밀번호 | `password` |
+   | SSH 사용자 | Linux/Windows(PowerShell) 원격 접속 계정 | `sshuser` |
+   | SSH 비밀번호 | Linux/Windows(PowerShell) 원격 접속 비밀번호 | `password` |
    | SSH 포트 | SSH 포트 (기본 22) | `322` |
+   | WinRM 사용자 | Windows(WinRM) 원격 접속 계정 | `Administrator` |
+   | WinRM 비밀번호 | Windows(WinRM) 원격 접속 비밀번호 | `password` |
+   | WinRM 포트 | WinRM 포트 (기본 5985=HTTP, 5986=HTTPS) | `5985` |
+   | 도메인 | Windows 도메인 (선택) | `MYDOMAIN` |
+   | Transport | WinRM 인증 방식 (선택) | `NTLM`, `Basic`, `Kerberos`, `CredSSP` |
 
 3. **`접속 정보 적용`** 클릭
 4. 자동으로 주기적 갱신 시작 (기본 30초, 설정에서 변경 가능)
@@ -717,11 +722,14 @@ Ping 또는 TCP 연결(Telnet) 테스트를 수행합니다.
 
 | OS 타입 | 수집 방식 |
 |---------|-----------|
-| Windows (로컬) | WMI 명령 |
-| Windows (원격) | WMI /node 명령 |
+| Windows (WMI) | 로컬: WMI 명령, 원격: WMI /node 명령 |
+| Windows (PowerShell) | SSH + PowerShell (paramiko) |
+| Windows (WinRM) | WinRM + PowerShell (pywinrm) |
 | Linux (모든 배포판) | SSH + `top`, `/proc/meminfo`, `df` |
 
-> 백엔드에 `paramiko` 패키지가 설치되어 있어야 Linux SSH 접속이 가능합니다.
+> - 백엔드에 `paramiko` 패키지가 설치되어 있어야 Linux SSH 및 Windows PowerShell(SSH) 접속이 가능합니다.
+> - 백엔드에 `pywinrm` 패키지가 설치되어 있어야 Windows WinRM 접속이 가능합니다.
+> - WinRM 대상 서버에서 `winrm quickconfig` 실행으로 WinRM 서비스가 활성화되어 있어야 합니다.
 
 ---
 
@@ -1065,8 +1073,11 @@ localStorage.clear();
 | 서버 접속 정보 미설정 | 위젯 ⚙ → 서버 접속 정보 입력 |
 | SSH 접속 실패 | 호스트/포트/계정/비밀번호 확인 |
 | paramiko 미설치 | 백엔드에서 `pip install paramiko` 실행 |
-| 방화벽 차단 | SSH 포트 접근 허용 확인 |
-| OS 타입 불일치 | 올바른 OS 타입 선택 (Windows/Linux) |
+| WinRM 접속 실패 | 대상 서버에서 `winrm quickconfig` 실행 확인, 방화벽에서 5985/5986 포트 허용 확인 |
+| pywinrm 미설치 | 백엔드에서 `pip install pywinrm` 실행 |
+| WinRM 인증 실패 | 계정/비밀번호/도메인 확인, Transport 설정 확인 (기본 NTLM) |
+| 방화벽 차단 | SSH 포트 또는 WinRM 포트 접근 허용 확인 |
+| OS 타입 불일치 | 올바른 OS 타입 선택 (Windows WMI/PowerShell/WinRM, Linux) |
 
 ### 15.5 네트워크 테스트 위젯이 작동하지 않음
 

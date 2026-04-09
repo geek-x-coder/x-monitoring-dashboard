@@ -69,6 +69,16 @@ export const formatInterval = (sec) => {
 export const formatTime = (d) =>
     d ? d.toLocaleTimeString("en-GB", { hour12: false }) : null;
 
+/** Format elapsed seconds as human-readable string (e.g. "3s ago", "2m ago") */
+export const formatElapsed = (d) => {
+    if (!d) return null;
+    const sec = Math.floor((Date.now() - d.getTime()) / 1000);
+    if (sec < 5) return "just now";
+    if (sec < 60) return `${sec}s ago`;
+    if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
+    return `${Math.floor(sec / 3600)}h ago`;
+};
+
 export const worstPct = (d) => {
     if (!d) return null;
     return Math.max(
