@@ -34,6 +34,7 @@ const ServerSettingRow = ({
     };
     const isLinux = server.osType?.startsWith("linux");
     const isWindowsSsh = server.osType === "windows-ssh";
+    const isWindowsWinrm = server.osType === "windows-winrm";
     const isWindows = server.osType === "windows";
     const isRemote =
         server.host && server.host !== "localhost" && server.host !== "127.0.0.1";
@@ -115,13 +116,17 @@ const ServerSettingRow = ({
                         </label>
                         <label>
                             <span>
-                                {isLinux || isWindowsSsh ? "SSH 포트" : "포트"}
+                                {isLinux || isWindowsSsh
+                                    ? "SSH 포트"
+                                    : isWindowsWinrm
+                                      ? "WinRM 포트"
+                                      : "포트"}
                             </span>
                             <input
                                 type='number'
                                 value={server.port}
                                 onChange={(e) => update("port", e.target.value)}
-                                placeholder='22'
+                                placeholder={isWindowsWinrm ? "5985" : "22"}
                             />
                         </label>
                     </div>
@@ -148,6 +153,60 @@ const ServerSettingRow = ({
                                 />
                             </label>
                         </div>
+                    )}
+                    {isWindowsWinrm && (
+                        <>
+                            <div className='srv-setting-grid-2'>
+                                <label>
+                                    <span>사용자명</span>
+                                    <input
+                                        type='text'
+                                        value={server.username || ""}
+                                        onChange={(e) =>
+                                            update("username", e.target.value)
+                                        }
+                                        placeholder='Administrator'
+                                    />
+                                </label>
+                                <label>
+                                    <span>비밀번호</span>
+                                    <input
+                                        type='password'
+                                        value={server.password || ""}
+                                        onChange={(e) =>
+                                            update("password", e.target.value)
+                                        }
+                                    />
+                                </label>
+                            </div>
+                            <div className='srv-setting-grid-2'>
+                                <label>
+                                    <span>도메인 (선택)</span>
+                                    <input
+                                        type='text'
+                                        value={server.domain || ""}
+                                        onChange={(e) =>
+                                            update("domain", e.target.value)
+                                        }
+                                        placeholder='MYDOMAIN'
+                                    />
+                                </label>
+                                <label>
+                                    <span>Transport</span>
+                                    <select
+                                        value={server.transport || "ntlm"}
+                                        onChange={(e) =>
+                                            update("transport", e.target.value)
+                                        }
+                                    >
+                                        <option value='ntlm'>NTLM</option>
+                                        <option value='basic'>Basic</option>
+                                        <option value='kerberos'>Kerberos</option>
+                                        <option value='credssp'>CredSSP</option>
+                                    </select>
+                                </label>
+                            </div>
+                        </>
                     )}
                     {isWindows && isRemote && (
                         <div className='srv-setting-grid-3'>

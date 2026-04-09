@@ -1,3 +1,7 @@
+import AppLogo from "../components/AppLogo.jsx";
+
+const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
+
 /**
  * Dashboard top header bar (SRP).
  *
@@ -19,7 +23,10 @@ const DashboardHeader = ({
     return (
         <header className='dashboard-header'>
             <div className='header-left'>
-                <h1>📊 Monitoring Dashboard</h1>
+                <h1 className='app-title'>
+                    <AppLogo size={34} className='app-title-logo' />
+                    <span className='app-title-text'>{APP_TITLE}</span>
+                </h1>
                 <div className='header-subtitle-row'>
                     <p>Real-time Application Status &amp; Alerts</p>
                     <span

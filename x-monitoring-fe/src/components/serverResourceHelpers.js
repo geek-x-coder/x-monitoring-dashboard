@@ -11,6 +11,7 @@ export const MAX_HISTORY = 120;
 export const OS_OPTIONS = [
     { value: "windows", label: "Windows (WMI)" },
     { value: "windows-ssh", label: "Windows (PowerShell)" },
+    { value: "windows-winrm", label: "Windows (WinRM)" },
     { value: "linux-ubuntu24", label: "Linux (Ubuntu 24.04)" },
     { value: "linux-rhel8", label: "Linux (RHEL 8.x)" },
     { value: "linux-rhel7", label: "Linux (RHEL 7.x)" },

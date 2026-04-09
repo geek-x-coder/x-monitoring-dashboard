@@ -81,6 +81,31 @@ export const resolveEndpointWithBase = (endpoint, baseUrl = null) => {
         : `${normalizedBase}/${rawEndpoint.replace(/^\/+/, "")}`;
 };
 
+/**
+ * 사용자가 입력한 endpoint 문자열을 정규화한다.
+ *   - "https://example.com/foo" → 그대로
+ *   - "/api/foo" → base + "/api/foo" (백엔드 상대경로)
+ *   - "www.naver.com" 또는 "example.com:8080/foo" → "http://" + 입력 (외부 호스트로 간주)
+ *   - "api/foo" 처럼 첫 세그먼트에 "."가 없는 상대경로 → base + "/api/foo"
+ *
+ * 헬스 체크 위젯처럼 사용자가 외부 호스트(예: www.naver.com)를 그대로 적는
+ * 케이스를 지원하기 위한 휴리스틱 정규화 helper.
+ */
+export const normalizeUserEndpoint = (endpoint, baseUrl = null) => {
+    const trimmed = String(endpoint ?? "").trim();
+    if (!trimmed) return trimmed;
+    if (/^https?:\/\//i.test(trimmed)) return trimmed;
+    if (trimmed.startsWith("/")) {
+        return resolveEndpointWithBase(trimmed, baseUrl);
+    }
+    // 첫 path 세그먼트에 "."이 있으면 호스트명으로 간주 (예: www.naver.com, example.com:8080/path)
+    const firstSegment = trimmed.split("/")[0];
+    if (firstSegment.includes(".")) {
+        return `http://${trimmed}`;
+    }
+    return resolveEndpointWithBase(trimmed, baseUrl);
+};
+
 // ── Retry helpers ─────────────────────────────────────────────────────────────
 
 export const isRetryable = (error) => {

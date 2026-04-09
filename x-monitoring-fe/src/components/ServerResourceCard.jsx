@@ -103,6 +103,13 @@ const ServerResourceCard = ({
                 if (srv.password) item.password = srv.password;
                 if (srv.domain) item.domain = srv.domain;
             }
+            if (srv.osType === "windows-winrm") {
+                item.username = srv.username;
+                item.password = srv.password;
+                if (srv.domain) item.domain = srv.domain;
+                if (srv.port) item.port = Number(srv.port);
+                if (srv.transport) item.transport = srv.transport;
+            }
             if (
                 (srv.osType.startsWith("linux") || srv.osType === "windows-ssh") &&
                 srv.host !== "localhost" &&
@@ -351,15 +358,18 @@ const ServerResourceCard = ({
             return;
         }
         const last = serversDraft[serversDraft.length - 1];
+        const defaultOsType = last?.osType || "linux-rhel8";
+        const defaultPort = defaultOsType === "windows-winrm" ? "5985" : "22";
         const newSrv = {
             id: generateId(),
             label: "",
-            osType: last?.osType || "linux-rhel8",
+            osType: defaultOsType,
             host: "",
             username: last?.username || "",
             password: last?.password || "",
             domain: last?.domain || "",
-            port: last?.port || "22",
+            port: last?.port || defaultPort,
+            transport: last?.transport || "",
             criteria: { ...DEFAULT_CRITERIA },
         };
         setServersDraft((p) => [...p, newSrv]);

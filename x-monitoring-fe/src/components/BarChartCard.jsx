@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
     Bar,
@@ -6,11 +6,17 @@ import {
     CartesianGrid,
     Cell,
     Legend,
+    ReferenceLine,
     ResponsiveContainer,
     Tooltip,
     XAxis,
     YAxis,
 } from "recharts";
+import {
+    OPERATORS as THRESHOLD_OPERATORS,
+    THRESHOLD_COLORS,
+    normalizeThresholds,
+} from "../utils/chartThresholds.js";
 import "./BarChartCard.css";
 
 const CHART_COLORS = [
@@ -57,28 +63,36 @@ const detectColumns = (rows) => {
     return Array.from(cols);
 };
 
-const ChartTooltip = ({ active, payload, label }) => {
-    if (!active || !payload?.length) return null;
-    return (
-        <div className='bc-tooltip'>
-            <p className='bc-tooltip-label'>{String(label)}</p>
-            {payload.map((entry) => (
-                <div
-                    key={entry.dataKey ?? entry.name}
-                    className='bc-tooltip-row'
-                    style={{ color: entry.fill ?? entry.color }}
-                >
-                    <span className='bc-tooltip-name'>{entry.name}</span>
-                    <span className='bc-tooltip-value'>
-                        {typeof entry.value === "number"
-                            ? entry.value.toLocaleString()
-                            : String(entry.value ?? "—")}
-                    </span>
-                </div>
-            ))}
-        </div>
-    );
+/**
+ * Tooltip formatter — reads the raw value straight from the hovered row
+ * (entry.payload[dataKey]) instead of trusting entry.value, because recharts
+ * can report 0 when `<Cell>` + `activeBar` are combined. This guarantees the
+ * number shown in the tooltip matches the bar the user is actually pointing at.
+ */
+const formatTooltipValue = (value, _name, entry) => {
+    const rawValue =
+        entry?.payload != null && entry?.dataKey != null
+            ? entry.payload[entry.dataKey]
+            : value;
+    const num = Number(rawValue);
+    if (Number.isFinite(num)) return num.toLocaleString();
+    return String(rawValue ?? "—");
 };
+
+const TOOLTIP_CONTENT_STYLE = {
+    background: "rgba(13, 18, 27, 0.96)",
+    border: "1px solid rgba(148, 163, 184, 0.22)",
+    borderRadius: "10px",
+    padding: "8px 12px",
+    boxShadow: "0 14px 32px rgba(0, 0, 0, 0.45)",
+    fontSize: "12px",
+};
+const TOOLTIP_LABEL_STYLE = {
+    color: "#cbd5e1",
+    fontWeight: 600,
+    marginBottom: "4px",
+};
+const TOOLTIP_ITEM_STYLE = { color: "#e2e8f0" };
 
 const BarChartCard = ({
     title,
@@ -120,6 +134,9 @@ const BarChartCard = ({
     const [maxBarsDraft, setMaxBarsDraft] = useState(
         chartSettings?.maxBars ?? MAX_BARS_DEFAULT,
     );
+    const [thresholdsDraft, setThresholdsDraft] = useState(() =>
+        normalizeThresholds(chartSettings?.thresholds),
+    );
 
     useEffect(() => setTitleDraft(title), [title]);
     useEffect(() => setEndpointDraft(endpoint), [endpoint]);
@@ -141,6 +158,9 @@ const BarChartCard = ({
             setMaxBarsDraft(chartSettings.maxBars);
         }
     }, [chartSettings?.maxBars]);
+    useEffect(() => {
+        setThresholdsDraft(normalizeThresholds(chartSettings?.thresholds));
+    }, [chartSettings?.thresholds]);
 
     const rows = useMemo(() => normalizeData(data), [data]);
     const detectedColumns = useMemo(() => detectColumns(rows), [rows]);
@@ -195,11 +215,25 @@ const BarChartCard = ({
         setMaxBars(clampedMaxBars);
         setMaxBarsDraft(clampedMaxBars);
 
+        const cleanThresholds = thresholdsDraft
+            .map((t) => ({
+                key: String(t.key || "").trim(),
+                operator: t.operator || ">=",
+                value: t.value === "" || t.value == null ? "" : Number(t.value),
+                enabled: t.enabled !== false,
+                label: (t.label || "").trim(),
+            }))
+            .filter(
+                (t) =>
+                    t.key && Number.isFinite(Number(t.value)) && t.value !== "",
+            );
+
         onChartSettingsChange?.({
             xAxisKey: resolvedX,
             yAxisKeys: resolvedY,
             orientation,
             maxBars: clampedMaxBars,
+            thresholds: cleanThresholds,
         });
 
         if (
@@ -244,6 +278,41 @@ const BarChartCard = ({
         );
     };
 
+    const addThreshold = () => {
+        const firstKey = effectiveYKeys[0] || yAxisKeys[0] || "";
+        setThresholdsDraft((prev) => [
+            ...prev,
+            {
+                key: firstKey,
+                operator: ">=",
+                value: "",
+                enabled: true,
+                label: "",
+            },
+        ]);
+    };
+
+    const updateThreshold = (index, patch) => {
+        setThresholdsDraft((prev) =>
+            prev.map((t, i) => (i === index ? { ...t, ...patch } : t)),
+        );
+    };
+
+    const removeThreshold = (index) => {
+        setThresholdsDraft((prev) => prev.filter((_, i) => i !== index));
+    };
+
+    const activeThresholds = useMemo(
+        () =>
+            (chartSettings?.thresholds ?? []).filter(
+                (t) =>
+                    t?.enabled !== false &&
+                    t?.key &&
+                    Number.isFinite(Number(t?.value)),
+            ),
+        [chartSettings?.thresholds],
+    );
+
     const settingsModal = showSettings ? (
         <div
             className='settings-overlay'
@@ -266,9 +335,10 @@ const BarChartCard = ({
                     </button>
                 </div>
                 <div className='settings-popup-body'>
+                    {/* 1. 기본 정보 */}
                     <div className='settings-section'>
-                        <h6>위젯 정보</h6>
-                        <div className='bc-settings-grid'>
+                        <h6>기본 정보</h6>
+                        <div className='bc-settings-grid bc-settings-grid-single'>
                             <div className='bc-setting-group'>
                                 <label>제목</label>
                                 <input
@@ -277,6 +347,7 @@ const BarChartCard = ({
                                     onChange={(e) =>
                                         setTitleDraft(e.target.value)
                                     }
+                                    placeholder='위젯 제목'
                                 />
                             </div>
                             <div className='bc-setting-group'>
@@ -287,14 +358,16 @@ const BarChartCard = ({
                                     onChange={(e) =>
                                         setEndpointDraft(e.target.value)
                                     }
+                                    placeholder='/api/...'
                                 />
                             </div>
                         </div>
                     </div>
 
+                    {/* 2. 차트 데이터 */}
                     <div className='settings-section'>
-                        <h6>데이터 설정</h6>
-                        <div className='bc-settings-grid'>
+                        <h6>차트 데이터</h6>
+                        <div className='bc-settings-grid bc-settings-grid-single'>
                             <div className='bc-setting-group'>
                                 <label>기준 컬럼 (카테고리)</label>
                                 <select
@@ -343,38 +416,185 @@ const BarChartCard = ({
                         </div>
                     </div>
 
+                    {/* 3. 표시 옵션 — 방향 / 최대 항목 */}
                     <div className='settings-section'>
-                        <h6>방향</h6>
-                        <div className='bc-radio-row'>
-                            <label className='bc-radio-item'>
+                        <h6>표시 옵션</h6>
+                        <div className='bc-settings-grid bc-settings-grid-single'>
+                            <div className='bc-setting-group'>
+                                <label>막대 방향</label>
+                                <div className='bc-radio-row'>
+                                    <label className='bc-radio-item'>
+                                        <input
+                                            type='radio'
+                                            name='bc-orientation'
+                                            value='vertical'
+                                            checked={
+                                                orientation === "vertical"
+                                            }
+                                            onChange={() =>
+                                                setOrientation("vertical")
+                                            }
+                                        />
+                                        세로 막대
+                                    </label>
+                                    <label className='bc-radio-item'>
+                                        <input
+                                            type='radio'
+                                            name='bc-orientation'
+                                            value='horizontal'
+                                            checked={
+                                                orientation === "horizontal"
+                                            }
+                                            onChange={() =>
+                                                setOrientation("horizontal")
+                                            }
+                                        />
+                                        가로 막대
+                                    </label>
+                                </div>
+                            </div>
+                            <div className='bc-setting-group'>
+                                <label>
+                                    최대 표시 항목{" "}
+                                    <span className='bc-hint'>(10 – 5000)</span>
+                                </label>
                                 <input
-                                    type='radio'
-                                    name='bc-orientation'
-                                    value='vertical'
-                                    checked={orientation === "vertical"}
-                                    onChange={() => setOrientation("vertical")}
-                                />
-                                세로 막대
-                            </label>
-                            <label className='bc-radio-item'>
-                                <input
-                                    type='radio'
-                                    name='bc-orientation'
-                                    value='horizontal'
-                                    checked={orientation === "horizontal"}
-                                    onChange={() =>
-                                        setOrientation("horizontal")
+                                    type='number'
+                                    min='10'
+                                    max='5000'
+                                    value={maxBarsDraft}
+                                    onChange={(e) =>
+                                        setMaxBarsDraft(e.target.value)
                                     }
                                 />
-                                가로 막대
-                            </label>
+                            </div>
                         </div>
                     </div>
 
-                    <div className='settings-inline-row'>
-                        <div className='settings-section'>
-                            <h6>위젯 크기</h6>
+                    {/* 4. 임계치 설정 */}
+                    <div className='settings-section'>
+                        <div className='bc-section-header-row'>
+                            <h6>임계치 설정</h6>
+                            <button
+                                type='button'
+                                className='bc-threshold-add-btn'
+                                onClick={addThreshold}
+                                disabled={effectiveYKeys.length === 0}
+                            >
+                                + 추가
+                            </button>
+                        </div>
+                        {thresholdsDraft.length === 0 ? (
+                            <div className='bc-threshold-empty'>
+                                설정된 임계치가 없습니다. 값 컬럼별로 임계치를
+                                추가하면 초과 시 위젯 테두리가 빨간색으로 깜빡입니다.
+                            </div>
+                        ) : (
+                            <div className='bc-threshold-list'>
+                                {thresholdsDraft.map((t, idx) => (
+                                    <div
+                                        className='bc-threshold-row'
+                                        key={idx}
+                                    >
+                                        <span
+                                            className='bc-threshold-color'
+                                            style={{
+                                                background:
+                                                    THRESHOLD_COLORS[
+                                                        idx %
+                                                            THRESHOLD_COLORS.length
+                                                    ],
+                                            }}
+                                        />
+                                        <input
+                                            type='checkbox'
+                                            className='bc-threshold-enabled'
+                                            checked={t.enabled !== false}
+                                            title='활성화'
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    enabled: e.target.checked,
+                                                })
+                                            }
+                                        />
+                                        <select
+                                            className='bc-threshold-key'
+                                            value={t.key}
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    key: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            {effectiveYKeys.length === 0 && (
+                                                <option value=''>(없음)</option>
+                                            )}
+                                            {effectiveYKeys.map((k) => (
+                                                <option key={k} value={k}>
+                                                    {k}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <select
+                                            className='bc-threshold-op'
+                                            value={t.operator}
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    operator: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            {THRESHOLD_OPERATORS.map((op) => (
+                                                <option
+                                                    key={op.value}
+                                                    value={op.value}
+                                                >
+                                                    {op.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <input
+                                            type='number'
+                                            className='bc-threshold-value'
+                                            value={t.value}
+                                            placeholder='값'
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    value: e.target.value,
+                                                })
+                                            }
+                                        />
+                                        <input
+                                            type='text'
+                                            className='bc-threshold-label'
+                                            value={t.label}
+                                            placeholder='라벨(선택)'
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    label: e.target.value,
+                                                })
+                                            }
+                                        />
+                                        <button
+                                            type='button'
+                                            className='bc-threshold-remove'
+                                            onClick={() => removeThreshold(idx)}
+                                            title='삭제'
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 5. 위젯 동작 */}
+                    <div className='settings-section'>
+                        <h6>위젯 동작</h6>
+                        <div className='bc-settings-grid'>
                             <div className='bc-setting-group'>
+                                <label>위젯 크기 (W × H)</label>
                                 <div className='bc-size-row'>
                                     <input
                                         type='number'
@@ -405,10 +625,8 @@ const BarChartCard = ({
                                     />
                                 </div>
                             </div>
-                        </div>
-                        <div className='settings-section'>
-                            <h6>체크 주기 (초)</h6>
                             <div className='bc-setting-group'>
+                                <label>체크 주기 (초)</label>
                                 <input
                                     type='number'
                                     min='1'
@@ -416,20 +634,6 @@ const BarChartCard = ({
                                     value={intervalDraft}
                                     onChange={(e) =>
                                         setIntervalDraft(e.target.value)
-                                    }
-                                />
-                            </div>
-                        </div>
-                        <div className='settings-section'>
-                            <h6>최대 표시 항목</h6>
-                            <div className='bc-setting-group'>
-                                <input
-                                    type='number'
-                                    min='10'
-                                    max='5000'
-                                    value={maxBarsDraft}
-                                    onChange={(e) =>
-                                        setMaxBarsDraft(e.target.value)
                                     }
                                 />
                             </div>
@@ -578,7 +782,49 @@ const BarChartCard = ({
                                         />
                                     </>
                                 )}
-                                <Tooltip content={<ChartTooltip />} cursor={{ fill: "transparent" }} />
+                                <Tooltip
+                                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                                    contentStyle={TOOLTIP_CONTENT_STYLE}
+                                    labelStyle={TOOLTIP_LABEL_STYLE}
+                                    itemStyle={TOOLTIP_ITEM_STYLE}
+                                    formatter={formatTooltipValue}
+                                />
+                                {activeThresholds.map((t, idx) => {
+                                    const numericValue = Number(t.value);
+                                    if (!Number.isFinite(numericValue))
+                                        return null;
+                                    const color =
+                                        THRESHOLD_COLORS[
+                                            idx % THRESHOLD_COLORS.length
+                                        ];
+                                    // vertical bars (recharts layout="horizontal"):
+                                    //   value axis = Y  → horizontal threshold line (y=value)
+                                    // horizontal bars (recharts layout="vertical"):
+                                    //   value axis = X  → vertical threshold line (x=value)
+                                    const lineProps = isHorizontal
+                                        ? { x: numericValue }
+                                        : { y: numericValue };
+                                    return (
+                                        <ReferenceLine
+                                            key={`threshold-${idx}`}
+                                            {...lineProps}
+                                            stroke={color}
+                                            strokeDasharray='4 4'
+                                            strokeWidth={1.6}
+                                            ifOverflow='extendDomain'
+                                            label={{
+                                                value:
+                                                    t.label ||
+                                                    `${t.key} ${t.operator} ${numericValue}`,
+                                                fill: color,
+                                                fontSize: 10,
+                                                position: isHorizontal
+                                                    ? "top"
+                                                    : "right",
+                                            }}
+                                        />
+                                    );
+                                })}
                                 {yAxisKeys.length > 1 && (
                                     <Legend
                                         wrapperStyle={{

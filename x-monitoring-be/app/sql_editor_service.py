@@ -9,11 +9,16 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from typing import Any, Callable
 
 from .config import ApiEndpointConfig, AppConfig
 from .exceptions import SqlFileNotFoundError
 from .sql_validator import load_sql_file, validate_select_only_sql
+
+# sqlId 허용 패턴 — path traversal/특수문자 차단.
+# 알파벳, 숫자, 언더스코어, 하이픈만 허용. 길이 1~64.
+_SQL_ID_PATTERN = re.compile(r"^[A-Za-z0-9_\-]{1,64}$")
 
 
 # Callback signature: (endpoint, client_ip) → None
@@ -96,6 +101,94 @@ class SqlEditorService:
             "restApiPath": endpoint.rest_api_path,
             "sqlId": endpoint.sql_id,
             "sql": file_contents,
+        }
+
+    # ── Standalone SQL file create / list ─────────────────────────────────
+
+    def list_sql_files(self) -> list[dict[str, Any]]:
+        """List all .sql files currently present in the sql directory."""
+        if not os.path.isdir(self._sql_dir):
+            return []
+        files: list[dict[str, Any]] = []
+        for name in sorted(os.listdir(self._sql_dir)):
+            if not name.endswith(".sql"):
+                continue
+            sql_id = name[:-4]
+            full_path = os.path.join(self._sql_dir, name)
+            try:
+                size = os.path.getsize(full_path)
+            except OSError:
+                size = 0
+            files.append({"sqlId": sql_id, "fileName": name, "sizeBytes": size})
+        return files
+
+    def create_sql_file(
+        self, sql_id: str, sql: str, actor: str, client_ip: str, *, overwrite: bool = True,
+    ) -> dict[str, Any]:
+        """Create (or overwrite) a SQL file at <sql_dir>/<sql_id>.sql.
+
+        - sql_id is validated against `_SQL_ID_PATTERN` (no path traversal).
+        - SQL body is validated via `validate_select_only_sql`.
+        - When overwrite=False and the file already exists, raises FileExistsError.
+        - This is independent of the api endpoint configuration — the file may
+          exist before any endpoint references it (or after, for ad-hoc edits).
+        """
+        sql_id_clean = str(sql_id or "").strip()
+        if not _SQL_ID_PATTERN.match(sql_id_clean):
+            raise ValueError(
+                "sqlId must contain only letters, digits, underscores, hyphens (1–64 chars)"
+            )
+
+        # Ensure target dir exists (frozen exe-dir/sql may not exist on first run).
+        os.makedirs(self._sql_dir, exist_ok=True)
+
+        sql_path = os.path.join(self._sql_dir, f"{sql_id_clean}.sql")
+
+        # Defense-in-depth: ensure resolved path is still inside sql_dir.
+        resolved_sql_dir = os.path.realpath(self._sql_dir)
+        resolved_sql_path = os.path.realpath(sql_path)
+        if not resolved_sql_path.startswith(resolved_sql_dir + os.sep) \
+                and resolved_sql_path != resolved_sql_dir:
+            raise ValueError("invalid sqlId — resolved path escapes sql directory")
+
+        already_exists = os.path.isfile(sql_path)
+        if already_exists and not overwrite:
+            raise FileExistsError(sql_path)
+
+        normalized_sql = str(sql or "").replace("\r\n", "\n").strip()
+        validate_select_only_sql(normalized_sql, self._config_provider().sql_validation_typo_patterns)
+
+        file_contents = f"{normalized_sql}\n"
+        with open(sql_path, "w", encoding="utf-8") as file:
+            file.write(file_contents)
+
+        self._logger.info(
+            "SQL file %s sqlId=%s path=%s actor=%s clientIp=%s",
+            "overwritten" if already_exists else "created",
+            sql_id_clean, sql_path, actor, client_ip,
+        )
+
+        # If this sqlId happens to be referenced by an active endpoint, refresh
+        # its cache so the new content takes effect immediately. (Best-effort —
+        # silently skip if no endpoint matches.)
+        for endpoint in self._config_provider().apis.values():
+            if endpoint.enabled and endpoint.sql_id == sql_id_clean:
+                try:
+                    self._on_sql_updated(endpoint, client_ip)
+                except Exception:
+                    self._logger.exception(
+                        "Cache refresh after SQL file save failed sqlId=%s apiId=%s",
+                        sql_id_clean, endpoint.api_id,
+                    )
+                break
+
+        return {
+            "sqlId": sql_id_clean,
+            "fileName": f"{sql_id_clean}.sql",
+            "path": sql_path,
+            "sql": file_contents,
+            "created": not already_exists,
+            "overwritten": already_exists,
         }
 
     # ── Validation rules ──────────────────────────────────────────────────

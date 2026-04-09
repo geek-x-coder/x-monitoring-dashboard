@@ -47,9 +47,11 @@ const TargetRow = ({ target, state, displayMode }) => {
     const success = s.success;
     const compact = displayMode === "compact";
 
-    const dotColor = loading ? "#6b7280" : !checked ? "#6b7280" : success ? "#22c55e" : "#ef4444";
-    const statusText = loading ? "..." : !checked ? "—" : success ? "OK" : "FAIL";
-    const statusClass = loading ? "" : !checked ? "" : success ? "live" : "dead";
+    // 체크 중(loading)이라도 직전 결과(OK/FAIL)를 그대로 유지한다.
+    // 한 번도 체크한 적 없을 때만 회색/— 로 표시한다. 진행 중임은 spinner로 표시.
+    const dotColor = !checked ? "#6b7280" : success ? "#22c55e" : "#ef4444";
+    const statusText = !checked ? "—" : success ? "OK" : "FAIL";
+    const statusClass = !checked ? "" : success ? "live" : "dead";
 
     const tooltip = [
         `이름: ${target.label || "(없음)"}`,
@@ -63,8 +65,8 @@ const TargetRow = ({ target, state, displayMode }) => {
     ].filter(Boolean).join("\n");
 
     return (
-        <div className={`net-row mode-${displayMode}${!loading && checked && !success ? " fail" : ""}`} title={tooltip}>
-            <span className={`net-row-dot${!loading && checked && !success ? " pulse" : ""}`} style={{ backgroundColor: dotColor }} />
+        <div className={`net-row mode-${displayMode}${checked && !success ? " fail" : ""}`} title={tooltip}>
+            <span className={`net-row-dot${checked && !success ? " pulse" : ""}`} style={{ backgroundColor: dotColor }} />
             <span className="net-row-label">
                 {target.label || target.host}
             </span>
@@ -174,7 +176,6 @@ const NetworkTestCard = ({
     /* ── per-target state map ────────────────────────────────────── */
     const [targetStates, setTargetStates] = useState({});
     const targetsRef = useRef(targets);
-    const timerRef = useRef(null);
 
     useEffect(() => { targetsRef.current = targets; }, [targets]);
 
@@ -257,10 +258,11 @@ const NetworkTestCard = ({
     }, [targetsKey, checkAllTargets]);
 
     useEffect(() => {
-        if (targets.length === 0) return;
-        const ms = (refreshIntervalSec ?? 10) * 1000;
-        timerRef.current = setInterval(checkAllTargets, ms);
-        return () => clearInterval(timerRef.current);
+        if (targets.length === 0) return undefined;
+        // refreshIntervalSec이 string("30")으로 들어와도 안전하게 처리한다.
+        const sec = Math.max(1, Number(refreshIntervalSec) || 10);
+        const id = setInterval(checkAllTargets, sec * 1000);
+        return () => clearInterval(id);
     }, [targetsKey, refreshIntervalSec, checkAllTargets]);
 
     /* ── alarm reporting ──────────────────────────────────────���─── */
@@ -326,7 +328,7 @@ const NetworkTestCard = ({
     };
 
     const handleIntervalApply = () => {
-        const v = clamp(intervalDraft, 5, 3600, 10);
+        const v = clamp(intervalDraft, 1, 3600, 10);
         setIntervalDraft(v);
         onRefreshIntervalChange(v);
     };
@@ -430,7 +432,7 @@ const NetworkTestCard = ({
                         <div className="settings-section refresh-interval-section">
                             <h6>갱신 주기 (초)</h6>
                             <div className="refresh-interval-editor">
-                                <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min="5" max="3600" value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
+                                <label className="refresh-interval-input-label"><span>Interval</span><input type="number" min="1" max="3600" value={intervalDraft} onChange={(e) => setIntervalDraft(e.target.value)} /></label>
                                 <button type="button" className="size-preset-btn" onClick={handleIntervalApply}>적용</button>
                             </div>
                         </div>

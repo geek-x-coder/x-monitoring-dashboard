@@ -218,6 +218,9 @@ const WidgetRenderer = ({
                 onWidgetMetaChange={(updates) =>
                     onWidgetMetaChange(widget.id, updates)
                 }
+                onSizeChange={(nextWidth, nextHeight) =>
+                    onWidgetSizeChange(widget.id, nextWidth, nextHeight)
+                }
             />
         );
     }

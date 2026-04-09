@@ -2,7 +2,12 @@ import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuthStore } from "../store/authStore";
 import { authService } from "../services/api";
+import AppLogo from "../components/AppLogo.jsx";
 import "./LoginPage.css";
+
+const APP_TITLE = import.meta.env.VITE_APP_TITLE || "Monitoring Dashboard";
+const COMPANY_NAME = import.meta.env.VITE_COMPANY_NAME || "Monitoring Dashboard";
+const CURRENT_YEAR = new Date().getFullYear();
 
 const LoginPage = () => {
     const [username, setUsername] = useState("");
@@ -62,7 +67,10 @@ const LoginPage = () => {
             <div className='login-container'>
                 <div className='login-box'>
                     <div className='login-header'>
-                        <h1>Monitoring Dashboard</h1>
+                        <h1 className='app-title'>
+                            <AppLogo size={38} className='app-title-logo' />
+                            <span className='app-title-text'>{APP_TITLE}</span>
+                        </h1>
                         <p>System Administrator</p>
                     </div>
 
@@ -117,7 +125,10 @@ const LoginPage = () => {
                     </form>
 
                     <div className='login-footer'>
-                        <p>© 2026 Monitoring Dashboard. All rights reserved.</p>
+                        <p>
+                            Copyright © {CURRENT_YEAR} {COMPANY_NAME}. All
+                            rights reserved.
+                        </p>
                     </div>
                 </div>
 

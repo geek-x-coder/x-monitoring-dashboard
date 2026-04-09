@@ -2,7 +2,7 @@
  * Dashboard service (ISP + SRP): split into focused method groups.
  * Each method group handles one concern: endpoints, data, health, SQL, logs, cache.
  */
-import apiClient from "./http.js";
+import apiClient, { getRememberedApiBaseUrl } from "./http.js";
 
 // ── Endpoint catalog ──────────────────────────────────────────────────────────
 
@@ -65,7 +65,29 @@ const isCrossOrigin = (url) => {
     }
 };
 
-const needsProxy = (url) => !isElectron() && isCrossOrigin(url);
+/**
+ * 우리 백엔드(API base)와 동일 origin인지 판정.
+ *
+ * 헬스체크 프록시(`/dashboard/health-check-proxy*`)는 백엔드가 서버사이드에서
+ * 외부 호출을 흉내내는 구조라 Authorization 헤더를 첨부하지 않는다. 따라서
+ * 타깃이 인증이 필요한 우리 백엔드 자기 자신을 가리키면 매 폴링마다
+ * `Auth rejected reason=missing_token` 경고가 찍힌다.
+ *
+ * 이를 막기 위해 타깃이 우리 API base와 같은 origin이면 프록시를 우회하고
+ * `apiClient`로 직접 호출하여 요청 인터셉터가 Bearer 토큰을 붙이도록 한다.
+ */
+const isOurBackendUrl = (url) => {
+    try {
+        const target = new URL(url, window.location.origin);
+        const base = new URL(getRememberedApiBaseUrl());
+        return target.origin === base.origin;
+    } catch {
+        return false;
+    }
+};
+
+const needsProxy = (url) =>
+    !isElectron() && isCrossOrigin(url) && !isOurBackendUrl(url);
 
 export const healthService = {
     checkEndpointHealth: async (endpoint) => {
@@ -222,6 +244,18 @@ export const sqlEditorService = {
 
     updateApiSqlScript: async (apiId, sql) => {
         const response = await apiClient.put(`/dashboard/sql-editor/${apiId}`, { sql });
+        return response.data;
+    },
+
+    listSqlFiles: async () => {
+        const response = await apiClient.get("/dashboard/sql-editor/files");
+        return response.data;
+    },
+
+    createSqlFile: async (sqlId, sql, { overwrite = true } = {}) => {
+        const response = await apiClient.post("/dashboard/sql-editor/files", {
+            sqlId, sql, overwrite,
+        });
         return response.data;
     },
 };

@@ -1,9 +1,10 @@
 """Server resource collector — collects CPU/Memory/Disk usage from a server.
 
-Handles three OS strategies via local commands or SSH:
-    windows      — local WMI / remote WMI via /node:
-    windows-ssh  — PowerShell over SSH (paramiko)
-    linux-*      — top + /proc/meminfo + df, locally or via SSH
+Handles four OS strategies via local commands, SSH, or WinRM:
+    windows        — local WMI / remote WMI via /node:
+    windows-ssh    — PowerShell over SSH (paramiko)
+    windows-winrm  — PowerShell over WinRM (pywinrm)
+    linux-*        — top + /proc/meminfo + df, locally or via SSH
 
 The collector is intentionally pure: it takes a `spec` dict and returns a
 result dict in a fixed shape, raising no exceptions to the caller.
@@ -181,6 +182,102 @@ def _collect_windows_ssh(run_cmd) -> dict[str, Any]:
     return metrics
 
 
+def _collect_windows_winrm(host: str, port: int, username: str, password: str,
+                           domain: str, transport: str = "ntlm",
+                           timeout: int = 15) -> dict[str, Any]:
+    """Collect resources from a Windows host via WinRM (pywinrm).
+
+    Uses PowerShell remoting over HTTP/HTTPS. Default port 5985 (HTTP).
+    Supported transports: ntlm (default), basic, kerberos, credssp.
+    """
+    try:
+        import winrm  # local import: optional dep
+    except ImportError:
+        return {**_empty_metrics(), "error": "pywinrm not installed (pip install pywinrm)"}
+
+    metrics = _empty_metrics()
+    error: str | None = None
+
+    scheme = "https" if port == 5986 else "http"
+    endpoint = f"{scheme}://{host}:{port}/wsman"
+    user = f"{domain}\\{username}" if domain else username
+
+    try:
+        session = winrm.Session(
+            endpoint,
+            auth=(user, password),
+            transport=transport,
+            server_cert_validation="ignore",
+            operation_timeout_sec=timeout,
+            read_timeout_sec=timeout + 5,
+        )
+    except Exception as e:
+        return {**_empty_metrics(), "error": f"WinRM session init failed: {e}"}
+
+    def _run_ps(script: str) -> str:
+        try:
+            result = session.run_ps(script)
+            if result.status_code != 0:
+                stderr = result.std_err.decode("utf-8", errors="replace").strip()
+                return f"ERROR: {stderr}" if stderr else "ERROR: non-zero exit"
+            return result.std_out.decode("utf-8", errors="replace").strip()
+        except Exception as e:
+            return f"ERROR: {e}"
+
+    # CPU
+    cpu_raw = _run_ps(
+        "(Get-CimInstance Win32_Processor | Measure-Object LoadPercentage -Average).Average"
+    )
+    if "ERROR" in cpu_raw:
+        error = cpu_raw
+    else:
+        metrics["cpu"]["usedPct"] = _parse_first_float(cpu_raw)
+
+    # Memory
+    mem_raw = _run_ps(
+        "$o=Get-CimInstance Win32_OperatingSystem;"
+        " 'TotalVisibleMemorySize='+$o.TotalVisibleMemorySize;"
+        " 'FreePhysicalMemory='+$o.FreePhysicalMemory"
+    )
+    if "ERROR" in mem_raw:
+        error = error or mem_raw
+    else:
+        kv = _parse_kv_lines(mem_raw, "TotalVisibleMemorySize", "FreePhysicalMemory")
+        total_kb, free_kb = kv["TotalVisibleMemorySize"], kv["FreePhysicalMemory"]
+        metrics["memory"]["totalGb"] = _kb_to_gb(total_kb)
+        if total_kb and free_kb:
+            metrics["memory"]["usedGb"] = round((total_kb - free_kb) / 1048576, 2)
+            metrics["memory"]["usedPct"] = round((total_kb - free_kb) / total_kb * 100, 1)
+
+    # Disk
+    disk_raw = _run_ps(
+        "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=3'"
+        " | ForEach-Object { $_.DeviceID+','+$_.Size+','+$_.FreeSpace }"
+    )
+    if "ERROR" in disk_raw:
+        error = error or disk_raw
+    else:
+        for line in disk_raw.splitlines():
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 3 and parts[0]:
+                try:
+                    device_id = parts[0]
+                    total_size = float(parts[1]) if parts[1] else 0
+                    free_space = float(parts[2]) if parts[2] else 0
+                    used = total_size - free_space
+                    metrics["disks"].append({
+                        "mount": device_id,
+                        "totalGb": round(total_size / 1073741824, 2),
+                        "usedGb": round(used / 1073741824, 2),
+                        "usedPct": round(used / total_size * 100, 1) if total_size > 0 else 0,
+                    })
+                except (ValueError, IndexError):
+                    pass
+
+    metrics["error"] = error
+    return metrics
+
+
 def _collect_windows_wmi(run_cmd, host: str, is_local: bool, username: str, password: str, domain: str) -> dict[str, Any]:
     """Collect resources from Windows via wmic, locally or with /node:."""
     metrics = _empty_metrics()
@@ -300,12 +397,13 @@ def collect_server_resources(spec: dict[str, Any], logger: logging.Logger | None
     """Collect CPU/Memory/Disk metrics for one server based on `spec`.
 
     spec keys (all optional except os_type):
-        os_type   — "windows" | "windows-ssh" | "linux-rhel8" | "linux-rhel7" | "linux-generic"
+        os_type   — "windows" | "windows-ssh" | "windows-winrm" | "linux-rhel8" | "linux-rhel7" | "linux-generic"
         host      — hostname/IP (default "localhost")
-        username  — SSH/WMI username
-        password  — SSH/WMI password
-        domain    — Windows domain (WMI only)
-        port      — SSH port (default 22)
+        username  — SSH/WMI/WinRM username
+        password  — SSH/WMI/WinRM password
+        domain    — Windows domain (WMI / WinRM)
+        port      — SSH port (default 22) or WinRM port (default 5985)
+        transport — WinRM transport: "ntlm" (default), "basic", "kerberos", "credssp"
 
     Returns the result dict (never raises).
     """
@@ -334,7 +432,16 @@ def collect_server_resources(spec: dict[str, Any], logger: logging.Logger | None
             return ssh_runner(cmd if isinstance(cmd, str) else " ".join(cmd))
         return local_runner(cmd, shell=shell)
 
+    transport = str(spec.get("transport", "ntlm")).strip().lower()
+
     try:
+        if os_type == "windows-winrm":
+            winrm_port = int(spec.get("port", 5985))
+            metrics = _collect_windows_winrm(
+                host, winrm_port, username, password, domain, transport,
+            )
+            return {"osType": "windows-winrm", "host": host, **metrics}
+
         if os_type == "windows-ssh":
             metrics = _collect_windows_ssh(run_cmd)
             return {"osType": "windows-ssh", "host": host, **metrics}

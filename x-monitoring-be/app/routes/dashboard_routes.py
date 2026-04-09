@@ -73,6 +73,47 @@ def register(app, backend, limiter) -> None:
             return jsonify({"message": str(error), "detail": error.sql_path}), 404
         return jsonify(payload), 200
 
+    @app.route("/dashboard/sql-editor/files", methods=["GET"])
+    @require_auth
+    @require_admin
+    def dashboard_sql_editor_list_files():
+        return jsonify({"files": backend.list_sql_files()}), 200
+
+    @app.route("/dashboard/sql-editor/files", methods=["POST"])
+    @require_auth
+    @require_admin
+    def dashboard_sql_editor_create_file():
+        """Create (or overwrite) a standalone SQL file at <sql_dir>/<sqlId>.sql.
+
+        JSON body:
+          sqlId     — required, [A-Za-z0-9_-]{1,64}
+          sql       — required, SELECT-only SQL body
+          overwrite — optional bool (default true)
+        """
+        body = request.get_json(silent=True) or {}
+        sql_id = str(body.get("sqlId") or "").strip()
+        sql_text = body.get("sql")
+        overwrite = bool(body.get("overwrite", True))
+
+        client_ip = get_client_ip()
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else ""
+        token_payload = verify_jwt_token(token) or {}
+        actor = str(token_payload.get("username", "unknown"))
+
+        try:
+            result = backend.create_sql_file(
+                sql_id, str(sql_text or ""), actor, client_ip, overwrite=overwrite,
+            )
+        except ValueError as error:
+            return jsonify({"message": str(error)}), 400
+        except FileExistsError as error:
+            return jsonify({
+                "message": "sql file already exists",
+                "detail": str(error),
+            }), 409
+        return jsonify(result), 201 if result.get("created") else 200
+
     @app.route("/dashboard/sql-editor/<api_id>", methods=["PUT"])
     @require_auth
     @require_admin

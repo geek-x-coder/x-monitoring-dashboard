@@ -22,17 +22,18 @@ def register(app, backend, limiter) -> None:
         """Collect CPU/Memory/Disk usage from a remote (or local) server.
 
         JSON body:
-          os_type  — "windows" | "windows-ssh" | "linux-rhel8" | "linux-rhel7" | "linux-generic"
-          host     — hostname/IP (optional; omit or "localhost" for this machine)
-          username — SSH username (required for remote Linux)
-          password — SSH password (required for remote Linux)
-          port     — SSH port (default 22) or WMI port
-          domain   — Windows domain (WMI only)
+          os_type   — "windows" | "windows-ssh" | "windows-winrm" | "linux-rhel8" | "linux-rhel7" | "linux-generic"
+          host      — hostname/IP (optional; omit or "localhost" for this machine)
+          username  — SSH/WMI/WinRM username (required for remote)
+          password  — SSH/WMI/WinRM password (required for remote)
+          port      — SSH port (default 22) or WinRM port (default 5985)
+          domain    — Windows domain (WMI / WinRM)
+          transport — WinRM transport: "ntlm" (default), "basic", "kerberos", "credssp"
         """
         body = request.get_json(silent=True) or {}
         if not str(body.get("os_type", "")).strip():
             return jsonify({
-                "message": "os_type is required (windows, windows-ssh, linux-ubuntu24, linux-rhel8, linux-rhel7, linux-generic)"
+                "message": "os_type is required (windows, windows-ssh, windows-winrm, linux-ubuntu24, linux-rhel8, linux-rhel7, linux-generic)"
             }), 400
         return jsonify(collect_server_resources(body, backend.logger)), 200
 

@@ -1,15 +1,21 @@
-import React, { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import {
     CartesianGrid,
     Legend,
     Line,
     LineChart,
+    ReferenceLine,
     ResponsiveContainer,
     Tooltip,
     XAxis,
     YAxis,
 } from "recharts";
+import {
+    OPERATORS as THRESHOLD_OPERATORS,
+    THRESHOLD_COLORS,
+    normalizeThresholds,
+} from "../utils/chartThresholds.js";
 import "./LineChartCard.css";
 
 const CHART_COLORS = [
@@ -166,6 +172,9 @@ const LineChartCard = ({
         w: currentSize?.w ?? 4,
         h: currentSize?.h ?? 4,
     });
+    const [thresholdsDraft, setThresholdsDraft] = useState(() =>
+        normalizeThresholds(chartSettings?.thresholds),
+    );
 
     useEffect(() => setTitleDraft(title), [title]);
     useEffect(() => setEndpointDraft(endpoint), [endpoint]);
@@ -186,6 +195,9 @@ const LineChartCard = ({
     useEffect(() => {
         setMaxPointsDraft(chartSettings?.maxPoints ?? MAX_CHART_POINTS);
     }, [chartSettings?.maxPoints]);
+    useEffect(() => {
+        setThresholdsDraft(normalizeThresholds(chartSettings?.thresholds));
+    }, [chartSettings?.thresholds]);
 
     const rows = useMemo(() => normalizeData(data), [data]);
     const detectedColumns = useMemo(() => detectColumns(rows), [rows]);
@@ -236,12 +248,26 @@ const LineChartCard = ({
         );
         setMaxPointsDraft(nextMaxPoints);
 
+        const cleanThresholds = thresholdsDraft
+            .map((t) => ({
+                key: String(t.key || "").trim(),
+                operator: t.operator || ">=",
+                value: t.value === "" || t.value == null ? "" : Number(t.value),
+                enabled: t.enabled !== false,
+                label: (t.label || "").trim(),
+            }))
+            .filter(
+                (t) =>
+                    t.key && Number.isFinite(Number(t.value)) && t.value !== "",
+            );
+
         onChartSettingsChange?.({
             xAxisKey: resolvedX,
             yAxisKeys: resolvedY,
             timeRange,
             showLegend,
             maxPoints: nextMaxPoints,
+            thresholds: cleanThresholds,
         });
 
         if (
@@ -288,6 +314,39 @@ const LineChartCard = ({
 
     const effectiveYKeys = yKeysDraft.length > 0 ? yKeysDraft : yAxisKeys;
 
+    const addThreshold = () => {
+        const firstKey = effectiveYKeys[0] || yAxisKeys[0] || "";
+        setThresholdsDraft((prev) => [
+            ...prev,
+            {
+                key: firstKey,
+                operator: ">=",
+                value: "",
+                enabled: true,
+                label: "",
+            },
+        ]);
+    };
+    const updateThreshold = (index, patch) => {
+        setThresholdsDraft((prev) =>
+            prev.map((t, i) => (i === index ? { ...t, ...patch } : t)),
+        );
+    };
+    const removeThreshold = (index) => {
+        setThresholdsDraft((prev) => prev.filter((_, i) => i !== index));
+    };
+
+    const activeThresholds = useMemo(
+        () =>
+            (chartSettings?.thresholds ?? []).filter(
+                (t) =>
+                    t?.enabled !== false &&
+                    t?.key &&
+                    Number.isFinite(Number(t?.value)),
+            ),
+        [chartSettings?.thresholds],
+    );
+
     const settingsModal = showSettings ? (
         <div
             className='settings-overlay'
@@ -310,9 +369,10 @@ const LineChartCard = ({
                     </button>
                 </div>
                 <div className='settings-popup-body'>
+                    {/* 1. 기본 정보 — 제목/엔드포인트 (가장 자주 바꾸는 필드) */}
                     <div className='settings-section'>
-                        <h6>위젯 정보</h6>
-                        <div className='lc-settings-grid'>
+                        <h6>기본 정보</h6>
+                        <div className='lc-settings-grid lc-settings-grid-single'>
                             <div className='lc-setting-group'>
                                 <label>제목</label>
                                 <input
@@ -321,6 +381,7 @@ const LineChartCard = ({
                                     onChange={(e) =>
                                         setTitleDraft(e.target.value)
                                     }
+                                    placeholder='위젯 제목'
                                 />
                             </div>
                             <div className='lc-setting-group'>
@@ -331,14 +392,16 @@ const LineChartCard = ({
                                     onChange={(e) =>
                                         setEndpointDraft(e.target.value)
                                     }
+                                    placeholder='/api/...'
                                 />
                             </div>
                         </div>
                     </div>
 
+                    {/* 2. 차트 데이터 — 축 설정 */}
                     <div className='settings-section'>
-                        <h6>데이터 설정</h6>
-                        <div className='lc-settings-grid'>
+                        <h6>차트 데이터</h6>
+                        <div className='lc-settings-grid lc-settings-grid-single'>
                             <div className='lc-setting-group'>
                                 <label>X축 (시간/카테고리)</label>
                                 <select
@@ -387,12 +450,13 @@ const LineChartCard = ({
                         </div>
                     </div>
 
+                    {/* 3. 표시 옵션 — 범례/다운샘플링 */}
                     <div className='settings-section'>
-                        <h6>표시 설정</h6>
+                        <h6>표시 옵션</h6>
                         <div className='lc-settings-grid'>
                             <div className='lc-setting-group'>
                                 <label>범례</label>
-                                <label className='lc-check-item'>
+                                <label className='lc-toggle-row'>
                                     <input
                                         type='checkbox'
                                         checked={showLegend}
@@ -421,10 +485,130 @@ const LineChartCard = ({
                         </div>
                     </div>
 
-                    <div className='settings-inline-row'>
-                        <div className='settings-section'>
-                            <h6>위젯 크기</h6>
+                    {/* 4. 임계치 설정 */}
+                    <div className='settings-section'>
+                        <div className='lc-section-header-row'>
+                            <h6>임계치 설정</h6>
+                            <button
+                                type='button'
+                                className='lc-threshold-add-btn'
+                                onClick={addThreshold}
+                                disabled={effectiveYKeys.length === 0}
+                            >
+                                + 추가
+                            </button>
+                        </div>
+                        {thresholdsDraft.length === 0 ? (
+                            <div className='lc-threshold-empty'>
+                                설정된 임계치가 없습니다. Y축 컬럼별로 임계치를
+                                추가하면 초과 시 위젯 테두리가 빨간색으로 깜빡입니다.
+                            </div>
+                        ) : (
+                            <div className='lc-threshold-list'>
+                                {thresholdsDraft.map((t, idx) => (
+                                    <div
+                                        className='lc-threshold-row'
+                                        key={idx}
+                                    >
+                                        <span
+                                            className='lc-threshold-color'
+                                            style={{
+                                                background:
+                                                    THRESHOLD_COLORS[
+                                                        idx %
+                                                            THRESHOLD_COLORS.length
+                                                    ],
+                                            }}
+                                        />
+                                        <input
+                                            type='checkbox'
+                                            className='lc-threshold-enabled'
+                                            checked={t.enabled !== false}
+                                            title='활성화'
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    enabled: e.target.checked,
+                                                })
+                                            }
+                                        />
+                                        <select
+                                            className='lc-threshold-key'
+                                            value={t.key}
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    key: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            {effectiveYKeys.length === 0 && (
+                                                <option value=''>(없음)</option>
+                                            )}
+                                            {effectiveYKeys.map((k) => (
+                                                <option key={k} value={k}>
+                                                    {k}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <select
+                                            className='lc-threshold-op'
+                                            value={t.operator}
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    operator: e.target.value,
+                                                })
+                                            }
+                                        >
+                                            {THRESHOLD_OPERATORS.map((op) => (
+                                                <option
+                                                    key={op.value}
+                                                    value={op.value}
+                                                >
+                                                    {op.label}
+                                                </option>
+                                            ))}
+                                        </select>
+                                        <input
+                                            type='number'
+                                            className='lc-threshold-value'
+                                            value={t.value}
+                                            placeholder='값'
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    value: e.target.value,
+                                                })
+                                            }
+                                        />
+                                        <input
+                                            type='text'
+                                            className='lc-threshold-label'
+                                            value={t.label}
+                                            placeholder='라벨(선택)'
+                                            onChange={(e) =>
+                                                updateThreshold(idx, {
+                                                    label: e.target.value,
+                                                })
+                                            }
+                                        />
+                                        <button
+                                            type='button'
+                                            className='lc-threshold-remove'
+                                            onClick={() => removeThreshold(idx)}
+                                            title='삭제'
+                                        >
+                                            ✕
+                                        </button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* 5. 위젯 동작 — 크기 / 주기 */}
+                    <div className='settings-section'>
+                        <h6>위젯 동작</h6>
+                        <div className='lc-settings-grid'>
                             <div className='lc-setting-group'>
+                                <label>위젯 크기 (W × H)</label>
                                 <div className='lc-size-row'>
                                     <input
                                         type='number'
@@ -455,10 +639,8 @@ const LineChartCard = ({
                                     />
                                 </div>
                             </div>
-                        </div>
-                        <div className='settings-section'>
-                            <h6>체크 주기 (초)</h6>
                             <div className='lc-setting-group'>
+                                <label>체크 주기 (초)</label>
                                 <input
                                     type='number'
                                     min='1'
@@ -596,6 +778,33 @@ const LineChartCard = ({
                                     width={44}
                                 />
                                 <Tooltip content={<ChartTooltip />} />
+                                {activeThresholds.map((t, idx) => {
+                                    const numericValue = Number(t.value);
+                                    if (!Number.isFinite(numericValue))
+                                        return null;
+                                    const color =
+                                        THRESHOLD_COLORS[
+                                            idx % THRESHOLD_COLORS.length
+                                        ];
+                                    return (
+                                        <ReferenceLine
+                                            key={`threshold-${idx}`}
+                                            y={numericValue}
+                                            stroke={color}
+                                            strokeDasharray='4 4'
+                                            strokeWidth={1.6}
+                                            ifOverflow='extendDomain'
+                                            label={{
+                                                value:
+                                                    t.label ||
+                                                    `${t.key} ${t.operator} ${numericValue}`,
+                                                fill: color,
+                                                fontSize: 10,
+                                                position: "right",
+                                            }}
+                                        />
+                                    );
+                                })}
                                 {(chartSettings?.showLegend ?? true) && (
                                     <Legend
                                         wrapperStyle={{

@@ -5,6 +5,7 @@ import { useWidgetApiData } from "../hooks/useApi";
 import {
     dashboardService,
     getRememberedApiBaseUrl,
+    normalizeUserEndpoint,
     rememberApiBaseUrl,
     resolveEndpointWithBase,
 } from "../services/api";
@@ -14,6 +15,7 @@ import {
     getEnabledCriteriaColumns,
     normalizeToArray,
 } from "../utils/helpers";
+import { hasThresholdViolation } from "../utils/chartThresholds.js";
 import { useDashboardStore } from "../store/dashboardStore";
 import { useAuthStore } from "../store/authStore";
 import { useAlarmStore } from "../store/alarmStore";
@@ -54,6 +56,10 @@ import "react-resizable/css/styles.css";
 import "./DashboardPage.css";
 
 const ResponsiveGridLayout = WidthProvider(Responsive);
+
+const COMPANY_NAME =
+    import.meta.env.VITE_COMPANY_NAME || "Monitoring Dashboard";
+const CURRENT_YEAR = new Date().getFullYear();
 // 빌드 시점 기본 URL 해석은 services/http.js에 일원화되어 있다.
 // (VITE_API_URL이 명시적 빈 문자열이면 same-origin 모드 → window.location.origin)
 // localStorage에 저장된 값이 있으면 그것을 우선한다.
@@ -96,7 +102,7 @@ const DashboardPage = () => {
     const [showConfigEditor, setShowConfigEditor] = useState(false);
     const [newApiForm, setNewApiForm] = useState({
         title: "",
-        endpoint: `${rememberedApiBaseUrl}/api/`,
+        endpoint: "",
         type: WIDGET_TYPE_TABLE,
         endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
     });
@@ -159,6 +165,7 @@ const DashboardPage = () => {
     const reportWidgetStatus = useAlarmStore(
         (state) => state.reportWidgetStatus,
     );
+    const alarmedWidgets = useAlarmStore((state) => state.alarmedWidgets);
     const alarmSound = useAlarmStore((state) => state.alarmSound);
     const setAlarmSound = useAlarmStore((state) => state.setAlarmSound);
     const soundEnabled = useAlarmStore((state) => state.soundEnabled);
@@ -202,6 +209,29 @@ const DashboardPage = () => {
                         if (alertCount > 0) {
                             alarmStatus = "dead";
                         }
+                    }
+                }
+            }
+
+            // Threshold-based alarms for chart widgets (line-chart / bar-chart).
+            // A violation on ANY row of ANY enabled threshold raises the alarm.
+            if (
+                alarmStatus !== "dead" &&
+                (widget.type === "line-chart" ||
+                    widget.type === "bar-chart") &&
+                Array.isArray(widget.chartSettings?.thresholds) &&
+                widget.chartSettings.thresholds.length > 0
+            ) {
+                const data = results[widget.id]?.data;
+                if (data) {
+                    const rows = normalizeToArray(data);
+                    if (
+                        hasThresholdViolation(
+                            rows,
+                            widget.chartSettings.thresholds,
+                        )
+                    ) {
+                        alarmStatus = "dead";
                     }
                 }
             }
@@ -266,7 +296,7 @@ const DashboardPage = () => {
             type: newApiForm.type,
             title: newApiForm.title.trim(),
             endpoint: needsEndpoint
-                ? resolveEndpointWithBase(
+                ? normalizeUserEndpoint(
                       newApiForm.endpoint.trim(),
                       rememberedApiBaseUrl,
                   )
@@ -296,7 +326,7 @@ const DashboardPage = () => {
         saveLayout(widgetId, nextLayout);
         setNewApiForm({
             title: "",
-            endpoint: `${rememberedApiBaseUrl}/api/`,
+            endpoint: "",
             type: WIDGET_TYPE_TABLE,
             endpointsText: `${rememberedApiBaseUrl}/health\n${rememberedApiBaseUrl}/dashboard/endpoints`,
         });
@@ -337,7 +367,7 @@ const DashboardPage = () => {
 
         updateWidget(apiId, {
             title: nextTitle,
-            endpoint: resolveEndpointWithBase(
+            endpoint: normalizeUserEndpoint(
                 nextEndpoint,
                 rememberedApiBaseUrl,
             ),
@@ -669,8 +699,14 @@ const DashboardPage = () => {
                                         (item) => item.i === widget.id,
                                     );
 
+                                const isWidgetAlarming =
+                                    alarmedWidgets.has(widget.id);
+
                                 return (
-                                    <div key={widget.id} className='grid-item'>
+                                    <div
+                                        key={widget.id}
+                                        className={`grid-item${isWidgetAlarming ? " widget-alarming" : ""}`}
+                                    >
                                         <WidgetRenderer
                                             widget={widget}
                                             currentLayout={currentLayout}
@@ -718,7 +754,8 @@ const DashboardPage = () => {
 
             <footer className='dashboard-footer'>
                 <span className='footer-copyright'>
-                    © 2026 Monitoring Dashboard. All rights reserved.
+                    Copyright © {CURRENT_YEAR} {COMPANY_NAME}. All rights
+                    reserved.
                 </span>
                 <span className='footer-version'>
                     monitoring-fe v{import.meta.env.VITE_APP_VERSION || "0.0.0"}

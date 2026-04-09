@@ -122,14 +122,13 @@ const HealthCheckCard = ({
             return;
         }
 
-        if (nextTitle === title && nextEndpoint === endpoint) {
-            return;
-        }
-
+        // 상위(DashboardPage)에서 resolveEndpointWithBase 정규화를 거치므로
+        // 입력값이 prop과 동일해 보여도 항상 콜백을 호출해 변경을 보장한다.
         onWidgetMetaChange?.({
             title: nextTitle,
             endpoint: nextEndpoint,
         });
+        setShowSettings(false);
     };
 
     const settingsPopup = showSettings ? (

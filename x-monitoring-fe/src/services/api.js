@@ -10,6 +10,7 @@ export {
     getRememberedApiBaseUrl,
     rememberApiBaseUrl,
     resolveEndpointWithBase,
+    normalizeUserEndpoint,
     isRetryable,
     retryWithBackoff,
     formatErrorMessage,

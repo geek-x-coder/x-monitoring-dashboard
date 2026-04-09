@@ -50,6 +50,9 @@ const formatInterval = (sec) => {
     return `every ${sec}s`;
 };
 
+const formatLocalTime = (date) =>
+    date ? date.toLocaleTimeString("en-GB", { hour12: false }) : null;
+
 const StatusListCard = ({
     title,
     endpoints,
@@ -74,6 +77,14 @@ const StatusListCard = ({
     const [endpointsDraft, setEndpointsDraft] = useState(
         serializeEndpoints(endpoints),
     );
+    const [lastUpdatedAt, setLastUpdatedAt] = useState(null);
+
+    useEffect(() => {
+        // 부모(useWidgetApiData)가 새 결과를 내려줄 때마다 갱신 시각을 저장.
+        if (data != null) {
+            setLastUpdatedAt(new Date());
+        }
+    }, [data]);
 
     const items = useMemo(() => {
         const raw = data?.items || [];
@@ -385,6 +396,11 @@ const StatusListCard = ({
                                 ⏱ {formatInterval(refreshIntervalSec ?? 5)}
                             </span>
                         </div>
+                        {lastUpdatedAt && (
+                            <span className='last-updated-time'>
+                                {formatLocalTime(lastUpdatedAt)}
+                            </span>
+                        )}
                     </div>
                 </div>
             </div>

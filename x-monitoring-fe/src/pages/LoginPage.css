@@ -119,6 +119,31 @@
     letter-spacing: -0.03em;
 }
 
+.login-header h1.app-title {
+    display: inline-flex;
+    align-items: center;
+    gap: 14px;
+    line-height: 1;
+}
+
+.login-header h1.app-title .app-title-logo {
+    filter: drop-shadow(0 10px 22px rgba(99, 102, 241, 0.45));
+    flex-shrink: 0;
+}
+
+.login-header h1.app-title .app-title-text {
+    background: linear-gradient(
+        100deg,
+        #f4f8ff 10%,
+        #c6d6ff 55%,
+        #e0c5ff 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 750;
+}
+
 .login-header p {
     margin: 10px 0 0 0;
     font-size: 13px;

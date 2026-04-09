@@ -221,7 +221,13 @@ const validateSqlScript = (sql, typoPatterns) => {
 const highlightSql = (code) =>
     Prism.highlight(code || "", Prism.languages.sql, "sql");
 
+const SQL_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
 const SqlEditorModal = ({ open, onClose }) => {
+    // mode: "edit" — 기존 활성 API의 SQL 파일을 편집
+    //       "create" — 새 sqlId로 sql/<id>.sql 파일을 생성
+    const [mode, setMode] = useState("edit");
+
     const [endpoints, setEndpoints] = useState([]);
     const [selectedApiId, setSelectedApiId] = useState("");
     const [sqlText, setSqlText] = useState("");
@@ -234,6 +240,10 @@ const SqlEditorModal = ({ open, onClose }) => {
     const [successMessage, setSuccessMessage] = useState("");
     const [typoPatterns, setTypoPatterns] = useState(DEFAULT_TYPO_PATTERNS);
 
+    // Create-mode 전용 상태
+    const [newSqlId, setNewSqlId] = useState("");
+    const [existingSqlFiles, setExistingSqlFiles] = useState([]);
+
     const issues = useMemo(
         () => validateSqlScript(sqlText, typoPatterns),
         [sqlText, typoPatterns],
@@ -242,6 +252,15 @@ const SqlEditorModal = ({ open, onClose }) => {
     const selectedEndpoint = useMemo(
         () => endpoints.find((item) => item.id === selectedApiId) ?? null,
         [endpoints, selectedApiId],
+    );
+
+    const trimmedNewSqlId = newSqlId.trim();
+    const newSqlIdValid = SQL_ID_PATTERN.test(trimmedNewSqlId);
+    const newSqlIdAlreadyExists = useMemo(
+        () =>
+            newSqlIdValid &&
+            existingSqlFiles.some((file) => file.sqlId === trimmedNewSqlId),
+        [existingSqlFiles, newSqlIdValid, trimmedNewSqlId],
     );
 
     useEffect(() => {
@@ -274,6 +293,17 @@ const SqlEditorModal = ({ open, onClose }) => {
                         rulesError,
                     );
                 }
+
+                try {
+                    const filesResponse = await dashboardService.listSqlFiles();
+                    setExistingSqlFiles(filesResponse?.files || []);
+                } catch (filesError) {
+                    setExistingSqlFiles([]);
+                    console.warn(
+                        "SQL file list load failed, ignoring.",
+                        filesError,
+                    );
+                }
             } catch (loadError) {
                 setError(
                     loadError?.response?.data?.message ||
@@ -288,7 +318,7 @@ const SqlEditorModal = ({ open, onClose }) => {
     }, [open]);
 
     useEffect(() => {
-        if (!open || !selectedApiId) {
+        if (!open || mode !== "edit" || !selectedApiId) {
             return;
         }
 
@@ -313,7 +343,7 @@ const SqlEditorModal = ({ open, onClose }) => {
         };
 
         loadSql();
-    }, [open, selectedApiId]);
+    }, [open, mode, selectedApiId]);
 
     if (!open) {
         return null;
@@ -325,19 +355,43 @@ const SqlEditorModal = ({ open, onClose }) => {
         setError("");
         setSuccessMessage("");
         try {
-            const response = await dashboardService.updateApiSqlScript(
-                selectedApiId,
-                sqlText,
-            );
-            const nextSql = String(response?.sql || sqlText);
-            setSqlText(nextSql);
-            setOriginalSql(nextSql);
-            setSuccessMessage(
-                "SQL 스크립트를 저장했습니다. 다음 API 호출부터 반영됩니다.",
-            );
+            if (mode === "create") {
+                const response = await dashboardService.createSqlFile(
+                    trimmedNewSqlId,
+                    sqlText,
+                    { overwrite: true },
+                );
+                const nextSql = String(response?.sql || sqlText);
+                setSqlText(nextSql);
+                setOriginalSql(nextSql);
+                setSuccessMessage(
+                    response?.created
+                        ? `새 SQL 파일을 생성했습니다: ${response.fileName}`
+                        : `기존 SQL 파일을 덮어썼습니다: ${response.fileName}`,
+                );
+                // Refresh file list so duplicate-detection stays accurate.
+                try {
+                    const filesResponse = await dashboardService.listSqlFiles();
+                    setExistingSqlFiles(filesResponse?.files || []);
+                } catch {
+                    /* non-fatal */
+                }
+            } else {
+                const response = await dashboardService.updateApiSqlScript(
+                    selectedApiId,
+                    sqlText,
+                );
+                const nextSql = String(response?.sql || sqlText);
+                setSqlText(nextSql);
+                setOriginalSql(nextSql);
+                setSuccessMessage(
+                    "SQL 스크립트를 저장했습니다. 다음 API 호출부터 반영됩니다.",
+                );
+            }
         } catch (saveError) {
             setError(
                 saveError?.response?.data?.message ||
+                    saveError?.response?.data?.detail ||
                     "SQL 스크립트 저장에 실패했습니다.",
             );
         } finally {
@@ -350,7 +404,22 @@ const SqlEditorModal = ({ open, onClose }) => {
             setError("기본 점검 오류를 먼저 해결해주세요.");
             return;
         }
+        if (mode === "create" && !newSqlIdValid) {
+            setError("SQL ID는 영문/숫자/밑줄/하이픈 1~64자만 허용됩니다.");
+            return;
+        }
         setShowSaveConfirm(true);
+    };
+
+    const handleModeChange = (nextMode) => {
+        if (nextMode === mode) return;
+        setMode(nextMode);
+        setError("");
+        setSuccessMessage("");
+        if (nextMode === "create") {
+            setSqlText("");
+            setOriginalSql("");
+        }
     };
 
     return (
@@ -373,38 +442,115 @@ const SqlEditorModal = ({ open, onClose }) => {
                 </div>
 
                 <div className='modal-body sql-editor-body'>
-                    <div className='sql-toolbar-grid'>
-                        <div className='form-group'>
-                            <label htmlFor='sql-api-target'>API 선택</label>
-                            <select
-                                id='sql-api-target'
-                                value={selectedApiId}
-                                onChange={(event) =>
-                                    setSelectedApiId(event.target.value)
-                                }
-                                disabled={loadingEndpoints || saving}
-                            >
-                                {endpoints.map((endpoint) => (
-                                    <option
-                                        key={endpoint.id}
-                                        value={endpoint.id}
-                                    >
-                                        {endpoint.title} ({endpoint.restApiPath}
-                                        )
-                                    </option>
-                                ))}
-                            </select>
-                        </div>
+                    <div
+                        className='sql-mode-tabs'
+                        role='tablist'
+                        aria-label='SQL editor mode'
+                    >
+                        <button
+                            type='button'
+                            role='tab'
+                            aria-selected={mode === "edit"}
+                            className={`sql-mode-tab${mode === "edit" ? " active" : ""}`}
+                            onClick={() => handleModeChange("edit")}
+                            disabled={saving}
+                        >
+                            기존 API 편집
+                        </button>
+                        <button
+                            type='button'
+                            role='tab'
+                            aria-selected={mode === "create"}
+                            className={`sql-mode-tab${mode === "create" ? " active" : ""}`}
+                            onClick={() => handleModeChange("create")}
+                            disabled={saving}
+                        >
+                            새 SQL 파일
+                        </button>
+                    </div>
 
-                        <div className='sql-summary-group'>
-                            <label className='sql-summary-label'>SQL ID</label>
-                            <div className='sql-endpoint-summary'>
-                                <span className='sql-summary-value'>
-                                    {selectedEndpoint?.sqlId || "-"}
-                                </span>
+                    {mode === "edit" ? (
+                        <div className='sql-toolbar-grid'>
+                            <div className='form-group'>
+                                <label htmlFor='sql-api-target'>API 선택</label>
+                                <select
+                                    id='sql-api-target'
+                                    value={selectedApiId}
+                                    onChange={(event) =>
+                                        setSelectedApiId(event.target.value)
+                                    }
+                                    disabled={loadingEndpoints || saving}
+                                >
+                                    {endpoints.map((endpoint) => (
+                                        <option
+                                            key={endpoint.id}
+                                            value={endpoint.id}
+                                        >
+                                            {endpoint.title} (
+                                            {endpoint.restApiPath})
+                                        </option>
+                                    ))}
+                                </select>
+                            </div>
+
+                            <div className='sql-summary-group'>
+                                <label className='sql-summary-label'>
+                                    SQL ID
+                                </label>
+                                <div className='sql-endpoint-summary'>
+                                    <span className='sql-summary-value'>
+                                        {selectedEndpoint?.sqlId || "-"}
+                                    </span>
+                                </div>
                             </div>
                         </div>
-                    </div>
+                    ) : (
+                        <div className='sql-toolbar-grid'>
+                            <div className='form-group'>
+                                <label htmlFor='sql-new-id'>
+                                    SQL ID (파일명)
+                                </label>
+                                <input
+                                    id='sql-new-id'
+                                    type='text'
+                                    value={newSqlId}
+                                    onChange={(event) =>
+                                        setNewSqlId(event.target.value)
+                                    }
+                                    placeholder='예: daily_sales_summary'
+                                    disabled={saving}
+                                    autoComplete='off'
+                                    spellCheck={false}
+                                />
+                                {newSqlId && !newSqlIdValid && (
+                                    <p className='sql-id-hint error'>
+                                        영문/숫자/밑줄/하이픈 1~64자만 허용됩니다.
+                                    </p>
+                                )}
+                                {newSqlIdValid && newSqlIdAlreadyExists && (
+                                    <p className='sql-id-hint warn'>
+                                        같은 이름의 파일이 이미 존재합니다 — 저장 시 덮어씁니다.
+                                    </p>
+                                )}
+                                {newSqlIdValid && !newSqlIdAlreadyExists && (
+                                    <p className='sql-id-hint ok'>
+                                        저장 시 sql/{trimmedNewSqlId}.sql 파일이 생성됩니다.
+                                    </p>
+                                )}
+                            </div>
+
+                            <div className='sql-summary-group'>
+                                <label className='sql-summary-label'>
+                                    저장 경로
+                                </label>
+                                <div className='sql-endpoint-summary'>
+                                    <span className='sql-summary-value'>
+                                        ./sql/{trimmedNewSqlId || "<id>"}.sql
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    )}
 
                     {error && <p className='sql-editor-error'>{error}</p>}
                     {successMessage && (
@@ -423,11 +569,11 @@ const SqlEditorModal = ({ open, onClose }) => {
                     </div>
 
                     <div className='sql-editor-surface'>
-                        {loadingSql ? (
+                        {mode === "edit" && loadingSql ? (
                             <div className='sql-editor-loading'>
                                 SQL을 불러오는 중...
                             </div>
-                        ) : endpoints.length === 0 ? (
+                        ) : mode === "edit" && endpoints.length === 0 ? (
                             <div className='sql-editor-loading'>
                                 편집 가능한 활성 API가 없습니다.
                             </div>
@@ -477,23 +623,36 @@ const SqlEditorModal = ({ open, onClose }) => {
                         onClick={handleSaveRequest}
                         disabled={
                             saving ||
-                            loadingSql ||
-                            !selectedApiId ||
                             !sqlText.trim() ||
-                            sqlText === originalSql
+                            (mode === "edit" &&
+                                (loadingSql ||
+                                    !selectedApiId ||
+                                    sqlText === originalSql)) ||
+                            (mode === "create" && !newSqlIdValid)
                         }
                     >
-                        {saving ? "저장 중..." : "서버 SQL 저장"}
+                        {saving
+                            ? "저장 중..."
+                            : mode === "create"
+                              ? "새 SQL 파일 저장"
+                              : "서버 SQL 저장"}
                     </button>
                 </div>
 
                 {showSaveConfirm && (
                     <div className='sql-save-confirm-overlay'>
                         <div className='sql-save-confirm-dialog'>
-                            <h4>SQL 변경 저장</h4>
+                            <h4>
+                                {mode === "create"
+                                    ? "새 SQL 파일 생성"
+                                    : "SQL 변경 저장"}
+                            </h4>
                             <p>
-                                변경된 SQL을 서버 파일에 저장하시겠습니까? 저장
-                                후 다음 API 호출부터 즉시 반영됩니다.
+                                {mode === "create"
+                                    ? newSqlIdAlreadyExists
+                                        ? `같은 이름의 파일이 존재합니다. sql/${trimmedNewSqlId}.sql 을 덮어씁니까?`
+                                        : `sql/${trimmedNewSqlId}.sql 파일을 새로 생성하시겠습니까?`
+                                    : "변경된 SQL을 서버 파일에 저장하시겠습니까? 저장 후 다음 API 호출부터 즉시 반영됩니다."}
                             </p>
                             <div className='sql-save-confirm-actions'>
                                 <button

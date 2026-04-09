@@ -36,20 +36,33 @@ export const useAlarmStore = create((set, get) => ({
     // Selected alarm sound type
     alarmSound: loadAlarmSound(),
 
-    /** Called by DashboardPage on every widget result update. */
+    /** Called by DashboardPage on every widget result update.
+     *
+     * IMPORTANT: this function is invoked on every poll — including widgets
+     * that are reporting the same "live" status they already had. We MUST
+     * return the same state object (no new Set) in the no-op case; otherwise
+     * subscribers to `alarmedWidgets` see a fresh Set reference on every call
+     * and re-render in an infinite loop (seen with NetworkTestCard calling
+     * onAlarmChange from within its own effect). */
     reportWidgetStatus: (widgetId, status) => {
         set((state) => {
+            const shouldAlarm = status === "dead";
+            const wasAlarming = state.alarmedWidgets.has(widgetId);
+            if (shouldAlarm === wasAlarming) {
+                // Membership unchanged → return the exact same state object
+                // so zustand skips the rerender.
+                return state;
+            }
+
             const next = new Set(state.alarmedWidgets);
-            if (status === "dead") {
+            if (shouldAlarm) {
                 next.add(widgetId);
             } else {
                 next.delete(widgetId);
             }
-            // If a previously-dead widget recovers, reset acknowledgement
-            // so the next alarm triggers sound again
-            const wasAlarming = state.alarmedWidgets.has(widgetId);
-            const nowAlive = status !== "dead";
-            const shouldResetAck = wasAlarming && nowAlive && next.size === 0;
+            // If a previously-dead widget recovers and the alarm set goes empty,
+            // reset acknowledgement so the next alarm triggers sound again.
+            const shouldResetAck = wasAlarming && !shouldAlarm && next.size === 0;
             return {
                 alarmedWidgets: next,
                 acknowledged: shouldResetAck ? false : state.acknowledged,

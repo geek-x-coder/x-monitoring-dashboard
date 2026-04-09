@@ -111,6 +111,7 @@ def resolve_jars(base_dir: str, jar_paths: list[str]) -> tuple[str, ...]:
 
 def load_app_config(config_path: str) -> AppConfig:
     import json
+    from .__version__ import __version__ as _BUILD_VERSION
     from .sql_validator import normalize_typo_patterns
 
     with open(config_path, "r", encoding="utf-8") as file:
@@ -218,8 +219,13 @@ def load_app_config(config_path: str) -> AppConfig:
         if enabled:
             endpoints_by_path[rest_api_path] = endpoint
 
+    # Prefer version from config.json (user-editable), but fall back to the
+    # build-time constant so a deployed config.json missing this field does
+    # NOT display as "0.0.0" in the frontend footer.
+    config_version = str(raw.get("version") or "").strip() or _BUILD_VERSION
+
     return AppConfig(
-        version=str(raw.get("version", "0.0.0")),
+        version=config_version,
         host=str(server.get("host", "0.0.0.0")),
         port=int(server.get("port", 5000)),
         thread_pool_size=max(1, int(server.get("thread_pool_size", 8))),

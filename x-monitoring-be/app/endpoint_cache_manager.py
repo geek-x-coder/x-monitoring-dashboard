@@ -231,10 +231,21 @@ class EndpointCacheManager:
             slow_threshold = self._config_provider().logging.slow_query_threshold_sec
             is_slow = duration_sec >= slow_threshold
             log_fn = self._logger.warning if is_slow else self._logger.info
-            log_fn(
-                "Cache refreshed apiId=%s path=%s source=%s %s durationSec=%.3f clientIp=%s",
-                endpoint.api_id, endpoint.rest_api_path, source, result_summary, duration_sec, client_ip,
-            )
+            # Scheduler-initiated refreshes identify a query by its sqlId (the
+            # persisted SQL script), omit the source/clientIp fields (always
+            # "scheduler"), and use concise, professional phrasing. Manual or
+            # SQL-update-triggered refreshes keep the richer contextual fields
+            # so operators can trace who triggered what.
+            if source == "scheduler":
+                log_fn(
+                    "Scheduled cache refresh succeeded sqlId=%s path=%s %s durationSec=%.3f",
+                    endpoint.sql_id, endpoint.rest_api_path, result_summary, duration_sec,
+                )
+            else:
+                log_fn(
+                    "Cache refreshed apiId=%s path=%s source=%s %s durationSec=%.3f clientIp=%s",
+                    endpoint.api_id, endpoint.rest_api_path, source, result_summary, duration_sec, client_ip,
+                )
             return entry
         except QueryExecutionTimeoutError as error:
             duration_sec = perf_counter() - started_timer

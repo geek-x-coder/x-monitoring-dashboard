@@ -37,6 +37,32 @@
     letter-spacing: -0.03em;
 }
 
+.header-left h1.app-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    line-height: 1;
+    margin-bottom: 10px;
+}
+
+.app-title-logo {
+    filter: drop-shadow(0 6px 14px rgba(79, 139, 255, 0.35));
+    flex-shrink: 0;
+}
+
+.app-title-text {
+    background: linear-gradient(
+        100deg,
+        #f4f8ff 10%,
+        #c6d6ff 55%,
+        #e0c5ff 100%
+    );
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    font-weight: 700;
+}
+
 .header-left p {
     margin: 0;
     font-size: 13px;
@@ -523,6 +549,55 @@
 .grid-item {
     animation: slideIn 0.3s ease-out;
     height: 100%;
+    position: relative;
+}
+
+/* Alarm blinking border — shown when a widget's alarm status becomes active
+ * (dead / slow-live / threshold violation / criteria match). The ring is drawn
+ * via box-shadow on the first child card so it overlays the actual widget
+ * border regardless of widget type. */
+.grid-item.widget-alarming > * {
+    animation: widget-alarm-pulse 1s ease-in-out infinite;
+    border-radius: 10px;
+}
+
+.grid-item.widget-alarming::before {
+    content: "";
+    position: absolute;
+    inset: -2px;
+    border-radius: 12px;
+    pointer-events: none;
+    border: 2px solid rgba(239, 68, 68, 0.9);
+    animation: widget-alarm-border 1s ease-in-out infinite;
+    z-index: 10;
+}
+
+@keyframes widget-alarm-pulse {
+    0%,
+    100% {
+        box-shadow:
+            0 0 0 1px rgba(239, 68, 68, 0.6),
+            0 0 22px rgba(239, 68, 68, 0.45),
+            0 16px 40px rgba(3, 8, 20, 0.26);
+    }
+    50% {
+        box-shadow:
+            0 0 0 1px rgba(239, 68, 68, 0.2),
+            0 0 10px rgba(239, 68, 68, 0.15),
+            0 16px 40px rgba(3, 8, 20, 0.26);
+    }
+}
+
+@keyframes widget-alarm-border {
+    0%,
+    100% {
+        border-color: rgba(239, 68, 68, 0.95);
+        box-shadow: 0 0 18px rgba(239, 68, 68, 0.55);
+    }
+    50% {
+        border-color: rgba(239, 68, 68, 0.3);
+        box-shadow: 0 0 6px rgba(239, 68, 68, 0.2);
+    }
 }
 
 .react-grid-item {

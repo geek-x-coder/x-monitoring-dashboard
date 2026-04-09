@@ -201,6 +201,16 @@ class MonitoringBackend:
     def get_sql_validation_rules(self) -> dict[str, Any]:
         return self._sql_editor.get_sql_validation_rules()
 
+    def list_sql_files(self) -> list[dict[str, Any]]:
+        return self._sql_editor.list_sql_files()
+
+    def create_sql_file(
+        self, sql_id: str, sql: str, actor: str, client_ip: str, *, overwrite: bool = True,
+    ) -> dict[str, Any]:
+        return self._sql_editor.create_sql_file(
+            sql_id, sql, actor, client_ip, overwrite=overwrite,
+        )
+
     # ── DB health diagnostics (delegated to DbHealthService) ──────────────
 
     def list_db_connections(self) -> list[dict[str, Any]]:
